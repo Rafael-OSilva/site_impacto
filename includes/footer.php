@@ -1,0 +1,1 @@
+<footer>Caixa Impacto - Sistema de Gestão &copy; 2025</footer>
