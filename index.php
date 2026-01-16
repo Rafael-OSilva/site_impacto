@@ -28,14 +28,13 @@ $is_module_page = false; // Index.php não está em modules/
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="shortcut icon" href="favicon.ico" type="">
     <title>Caixa Impacto</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="../caixa_impacto/css/style.css">
+    <link rel="stylesheet" href="css/style.css">
     <style>
         /* Estilos para os botões de ação */
         .btn-action {

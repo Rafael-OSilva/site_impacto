@@ -1,3 +1,4 @@
+na verdade é esse... 
 <?php
 session_start();
 // Verificar se o usuário está logado
@@ -71,6 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             error_log("❌ Erro ao cadastrar cliente: " . $e->getMessage());
         }
     }
+    
     // Atualização de crédito via AJAX
     if (isset($_POST['acao']) && $_POST['acao'] === 'atualizar_credito') {
         header('Content-Type: application/json');
@@ -116,49 +118,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         exit;
     }
-}
-
-// EXCLUSÃO DE CLIENTE
-if (isset($_POST['acao']) && $_POST['acao'] === 'excluir_cliente') {
-    header('Content-Type: application/json');
-
-    try {
-        $cliente_id = intval($_POST['cliente_id'] ?? 0);
-        $motivo = trim($_POST['motivo'] ?? '');
-
-        // Validações
-        if ($cliente_id <= 0) {
-            throw new Exception("ID do cliente inválido.");
-        }
-
-        if (empty($motivo)) {
-            throw new Exception("Informe o motivo da exclusão.");
-        }
-
-        // Verificar se cliente existe
-        $cliente = buscarClientePorId($connection, $cliente_id);
-        if (!$cliente) {
-            throw new Exception("Cliente não encontrado.");
-        }
-
-        // Excluir cliente
-        if (excluirCliente($connection, $cliente_id, $_SESSION['usuario_id'], $motivo)) {
+    
+    // EXCLUSÃO DE CLIENTE VIA AJAX
+    if (isset($_POST['acao']) && $_POST['acao'] === 'excluir_cliente') {
+        header('Content-Type: application/json');
+        
+        try {
+            $cliente_id = intval($_POST['cliente_id'] ?? 0);
+            $motivo = trim($_POST['motivo'] ?? '');
+            
+            // Validações
+            if ($cliente_id <= 0) {
+                throw new Exception("ID do cliente inválido.");
+            }
+            
+            if (empty($motivo)) {
+                throw new Exception("Informe o motivo da exclusão.");
+            }
+            
+            // Verificar se cliente existe
+            $cliente = buscarClientePorId($connection, $cliente_id);
+            if (!$cliente) {
+                throw new Exception("Cliente não encontrado.");
+            }
+            
+            // Excluir cliente
+            if (excluirCliente($connection, $cliente_id, $_SESSION['usuario_id'], $motivo)) {
+                echo json_encode([
+                    'success' => true,
+                    'message' => '✅ Cliente excluído com sucesso!',
+                    'cliente_nome' => $cliente['nome']
+                ]);
+            } else {
+                throw new Exception("Erro ao excluir cliente no banco de dados.");
+            }
+        } catch(Exception $e) {
+            error_log("Erro ao excluir cliente: " . $e->getMessage());
             echo json_encode([
-                'success' => true,
-                'message' => '✅ Cliente excluído com sucesso!',
-                'cliente_nome' => $cliente['nome']
+                'success' => false,
+                'message' => '❌ ' . $e->getMessage()
             ]);
-        } else {
-            throw new Exception("Erro ao excluir cliente no banco de dados.");
         }
-    } catch (Exception $e) {
-        error_log("Erro ao excluir cliente: " . $e->getMessage());
-        echo json_encode([
-            'success' => false,
-            'message' => '❌ ' . $e->getMessage()
-        ]);
+        exit;
     }
-    exit;
 }
 
 // Obter dados para exibição
@@ -384,6 +386,12 @@ $is_module_page = true;
             color: #c0392b;
             border: 1px solid rgba(231, 76, 60, 0.2);
         }
+        
+        .alert-warning {
+            background-color: rgba(241, 196, 15, 0.1);
+            color: #d35400;
+            border: 1px solid rgba(241, 196, 15, 0.2);
+        }
 
         .empty-state {
             text-align: center;
@@ -425,6 +433,15 @@ $is_module_page = true;
         .btn-secondary:hover {
             background-color: #7f8c8d;
         }
+        
+        .btn-danger {
+            background-color: #e74c3c;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background-color: #c0392b;
+        }
 
         .btn-editar {
             background: #f39c12;
@@ -434,10 +451,30 @@ $is_module_page = true;
             padding: 5px 10px;
             cursor: pointer;
             font-size: 0.85rem;
+            margin-right: 5px;
         }
 
         .btn-editar:hover {
             background: #e67e22;
+        }
+        
+        .btn-excluir {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        .btn-excluir:hover {
+            background: #c0392b;
+        }
+        
+        .btn-excluir:disabled {
+            background: #95a5a6;
+            cursor: not-allowed;
         }
 
         .page-title {
@@ -449,26 +486,16 @@ $is_module_page = true;
             align-items: center;
             gap: 10px;
         }
-
-        /* Adicione no seu <style> */
-        .btn-excluir {
-            background: #e74c3c;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 5px 10px;
-            cursor: pointer;
+        
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        small {
             font-size: 0.85rem;
-            margin-left: 5px;
-        }
-
-        .btn-excluir:hover {
-            background: #c0392b;
-        }
-
-        .btn-excluir:disabled {
-            background: #95a5a6;
-            cursor: not-allowed;
+            color: #666;
         }
     </style>
 </head>
@@ -602,14 +629,14 @@ $is_module_page = true;
                                                     <i class="fas fa-edit"></i> Editar
                                                 </button>
                                                 <?php if ($cliente['valor_credito'] == 0): ?>
-                                                    <button class="btn-excluir"
+                                                <button class="btn-excluir" 
                                                         onclick="abrirModalExclusao(
                                                             <?= $cliente['id'] ?>,
                                                             '<?= addslashes($cliente['nome']) ?>'
                                                         )"
                                                         title="Excluir cliente">
-                                                        <i class="fas fa-trash"></i>
-                                                    </button>
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
                                                 <?php endif; ?>
                                             </td>
                                         </tr>
@@ -675,14 +702,14 @@ $is_module_page = true;
                                                     <i class="fas fa-edit"></i> Crédito
                                                 </button>
                                                 <?php if ($cliente['valor_credito'] == 0): ?>
-                                                    <button class="btn-excluir"
+                                                <button class="btn-excluir" 
                                                         onclick="abrirModalExclusao(
                                                             <?= $cliente['id'] ?>,
                                                             '<?= addslashes($cliente['nome']) ?>'
                                                         )"
                                                         title="Excluir cliente">
-                                                        <i class="fas fa-trash"></i>
-                                                    </button>
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
                                                 <?php endif; ?>
                                             </td>
                                         </tr>
@@ -743,36 +770,37 @@ $is_module_page = true;
             </form>
         </div>
     </div>
+    
     <!-- Modal de Exclusão de Cliente -->
     <div class="modal" id="modalExcluir">
         <div class="modal-content">
             <h3><i class="fas fa-trash"></i> Excluir Cliente</h3>
-
+            
             <div class="cliente-info" id="clienteInfoExcluir">
                 <!-- Informações serão preenchidas via JavaScript -->
             </div>
-
+            
             <form id="formExcluir" onsubmit="excluirCliente(event)">
                 <input type="hidden" name="acao" value="excluir_cliente">
                 <input type="hidden" id="cliente_id_excluir" name="cliente_id">
-
+                
                 <div class="form-group">
                     <label for="motivo">Motivo da Exclusão *</label>
-                    <textarea id="motivo" name="motivo"
-                        rows="4"
-                        required
-                        placeholder="Informe o motivo da exclusão..."></textarea>
-                    <small style="color: #666;">Esta informação será registrada no histórico.</small>
+                    <textarea id="motivo" name="motivo" 
+                              rows="4" 
+                              required
+                              placeholder="Informe o motivo da exclusão..."></textarea>
+                    <small>Esta informação será registrada no histórico.</small>
                 </div>
-
+                
                 <div class="alert alert-warning">
                     <i class="fas fa-exclamation-triangle"></i>
-                    <strong>Atenção:</strong> Esta ação marcará o cliente como inativo.
+                    <strong>Atenção:</strong> Esta ação marcará o cliente como inativo. 
                     Clientes com crédito ou vendas pendentes não podem ser excluídos.
                 </div>
-
+                
                 <div id="modalMensagemExcluir"></div>
-
+                
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" onclick="fecharModalExclusao()">
                         <i class="fas fa-times"></i> Cancelar
@@ -829,6 +857,39 @@ $is_module_page = true;
         function fecharModalCredito() {
             document.getElementById('modalCredito').classList.remove('active');
         }
+        
+        // Funções para o modal de exclusão
+        function abrirModalExclusao(clienteId, clienteNome) {
+            // Preencher informações do cliente
+            const clienteInfo = document.getElementById('clienteInfoExcluir');
+            clienteInfo.innerHTML = `
+                <div class="cliente-info-row">
+                    <span><strong>Cliente a ser excluído:</strong></span>
+                    <span><strong style="color: #e74c3c;">${clienteNome}</strong></span>
+                </div>
+                <div class="cliente-info-row">
+                    <span><strong>ID:</strong></span>
+                    <span>${clienteId}</span>
+                </div>
+                <div class="cliente-info-row">
+                    <span><strong>Ação:</strong></span>
+                    <span style="color: #e74c3c;">Cliente será marcado como inativo</span>
+                </div>
+            `;
+            
+            // Configurar formulário
+            document.getElementById('cliente_id_excluir').value = clienteId;
+            document.getElementById('motivo').value = '';
+            document.getElementById('motivo').focus();
+            document.getElementById('modalMensagemExcluir').innerHTML = '';
+            
+            // Abrir modal
+            document.getElementById('modalExcluir').classList.add('active');
+        }
+
+        function fecharModalExclusao() {
+            document.getElementById('modalExcluir').classList.remove('active');
+        }
 
         // Atualizar crédito via AJAX
         function atualizarCredito(event) {
@@ -883,287 +944,52 @@ $is_module_page = true;
                     btnAtualizar.innerHTML = '<i class="fas fa-save"></i> Atualizar Crédito';
                 });
         }
-
-        function mostrarMensagem(tipo, mensagem) {
-            const mensagemDiv = document.getElementById('modalMensagem');
-            mensagemDiv.innerHTML = `
-                <div class="alert alert-${tipo === 'success' ? 'success' : 'error'}" style="margin: 10px 0;">
-                    <i class="fas fa-${tipo === 'success' ? 'check' : 'exclamation'}-circle"></i> ${mensagem}
-                </div>
-            `;
-        }
-
-        // Máscaras para CPF, telefone e valor
-        document.addEventListener('DOMContentLoaded', function() {
-            // Máscara para CPF
-            const cpfInput = document.getElementById('cpf');
-            if (cpfInput) {
-                cpfInput.addEventListener('input', function(e) {
-                    let value = e.target.value.replace(/\D/g, '');
-                    if (value.length > 11) value = value.substring(0, 11);
-
-                    if (value.length > 9) {
-                        value = value.replace(/^(\d{3})(\d{3})(\d{3})(\d{2}).*/, '$1.$2.$3-$4');
-                    } else if (value.length > 6) {
-                        value = value.replace(/^(\d{3})(\d{3})(\d{1,3}).*/, '$1.$2.$3');
-                    } else if (value.length > 3) {
-                        value = value.replace(/^(\d{3})(\d{1,3}).*/, '$1.$2');
-                    }
-                    e.target.value = value;
-                });
-            }
-
-            // Máscara para telefone
-            const telefoneInput = document.getElementById('telefone');
-            if (telefoneInput) {
-                telefoneInput.addEventListener('input', function(e) {
-                    let value = e.target.value.replace(/\D/g, '');
-                    if (value.length > 11) value = value.substring(0, 11);
-
-                    if (value.length > 10) {
-                        value = value.replace(/^(\d{2})(\d{5})(\d{4}).*/, '($1) $2-$3');
-                    } else if (value.length > 6) {
-                        value = value.replace(/^(\d{2})(\d{4})(\d{0,4}).*/, '($1) $2-$3');
-                    } else if (value.length > 2) {
-                        value = value.replace(/^(\d{2})(\d{0,5}).*/, '($1) $2');
-                    }
-                    e.target.value = value;
-                });
-            }
-
-            // Máscara para valor
-            const valorInput = document.getElementById('valor_credito');
-            const novoValorInput = document.getElementById('novo_valor');
-
-            function formatarValor(input) {
-                if (input) {
-                    input.addEventListener('input', function(e) {
-                        let value = e.target.value.replace(/\D/g, '');
-                        value = (value / 100).toFixed(2);
-                        value = value.replace('.', ',');
-                        value = value.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-                        e.target.value = value;
-                    });
-                }
-            }
-
-            formatarValor(valorInput);
-            formatarValor(novoValorInput);
-
-            // Fechar modal ao clicar fora
-            document.getElementById('modalCredito').addEventListener('click', function(e) {
-                if (e.target === this) {
-                    fecharModalCredito();
-                }
-            });
-
-            // Fechar modal com ESC
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape') {
-                    fecharModalCredito();
-                }
-            });
-        });
-
-        // Funções para o modal de exclusão
-        function abrirModalExclusao(clienteId, clienteNome) {
-            const clienteInfo = document.getElementById('clienteInfoExcluir');
-            clienteInfo.innerHTML = `
-        <div class="cliente-info-row">
-            <span><strong>Cliente a ser excluído:</strong></span>
-            <span><strong style="color: #e74c3c;">${clienteNome}</strong></span>
-        </div>
-        <div class="cliente-info-row">
-            <span><strong>ID:</strong></span>
-            <span>${clienteId}</span>
-        </div>
-        <div class="cliente-info-row">
-            <span><strong>Ação:</strong></span>
-            <span style="color: #e74c3c;">Cliente será marcado como inativo</span>
-        </div>
-    `;
-
-            // Configurar formulário
-            document.getElementById('cliente_id_excluir').value = clienteId;
-            document.getElementById('motivo').value = '';
-            document.getElementById('motivo').focus();
-            document.getElementById('modalMensagemExcluir').innerHTML = '';
-
-            // Abrir modal
-            document.getElementById('modalExcluir').classList.add('active');
-        }
-
-        function fecharModalExclusao() {
-            document.getElementById('modalExcluir').classList.remove('active');
-        }
-
+        
         // Excluir cliente via AJAX
         function excluirCliente(event) {
             event.preventDefault();
-
+            
             const form = document.getElementById('formExcluir');
             const formData = new FormData(form);
             const btnExcluir = document.getElementById('btnExcluir');
-
+            
             // Validar motivo
             const motivo = document.getElementById('motivo').value.trim();
             if (motivo.length < 5) {
                 mostrarMensagemExclusao('error', '❌ Informe um motivo com pelo menos 5 caracteres.');
                 return;
             }
-
+            
             // Desabilitar botão e mostrar loading
             btnExcluir.disabled = true;
             btnExcluir.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Excluindo...';
-
+            
             // Enviar requisição
             fetch('', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(async response => {
-                    const data = await response.json();
-                    return data;
-                })
-                .then(data => {
-                    if (data.success) {
-                        mostrarMensagemExclusao('success', data.message);
-
-                        // Recarregar a página após 2 segundos
-                        setTimeout(() => {
-                            location.reload();
-                        }, 2000);
-                    } else {
-                        mostrarMensagemExclusao('error', data.message);
-                        btnExcluir.disabled = false;
-                        btnExcluir.innerHTML = '<i class="fas fa-trash"></i> Confirmar Exclusão';
-                    }
-                })
-                .catch(error => {
-                    console.error('Erro:', error);
-                    mostrarMensagemExclusao('error', '❌ Erro ao excluir cliente. Tente novamente.');
+                method: 'POST',
+                body: formData
+            })
+            .then(async response => {
+                const data = await response.json();
+                return data;
+            })
+            .then(data => {
+                if (data.success) {
+                    mostrarMensagemExclusao('success', data.message);
+                    
+                    // Recarregar a página após 2 segundos
+                    setTimeout(() => {
+                        location.reload();
+                    }, 2000);
+                } else {
+                    mostrarMensagemExclusao('error', data.message);
                     btnExcluir.disabled = false;
                     btnExcluir.innerHTML = '<i class="fas fa-trash"></i> Confirmar Exclusão';
-                });
-        }
-
-        function mostrarMensagemExclusao(tipo, mensagem) {
-            const mensagemDiv = document.getElementById('modalMensagemExcluir');
-            mensagemDiv.innerHTML = `
-        <div class="alert alert-${tipo === 'success' ? 'success' : 'error'}" style="margin: 10px 0;">
-            <i class="fas fa-${tipo === 'success' ? 'check' : 'exclamation'}-circle"></i> ${mensagem}
-        </div>
-    `;
-        }
-        // Preencher informações do cliente
-        const clienteInfo = document.getElementById('clienteInfoExcluir');
-        clienteInfo.innerHTML = `
-        <div class="cliente-info-row">
-            <span><strong>Cliente a ser excluído:</strong></span>
-            <span><strong style="color: #e74c3c;">${clienteNome}</strong></span>
-        </div>
-        <div class="cliente-info-row">
-            <span><strong>ID:</strong></span>
-            <span>${clienteId}</span>
-        </div>
-        <div class="cliente-info-row">
-            <span><strong>Ação:</strong></span>
-            <span style="color: #e74c3c;">Cliente será marcado como inativo</span>
-        </div>
-    `;
-
-        // Configurar formulário
-        document.getElementById('cliente_id_excluir').value = clienteId;
-        document.getElementById('motivo').value = '';
-        document.getElementById('motivo').focus();
-        document.getElementById('modalMensagemExcluir').innerHTML = '';
-
-        // Abrir modal
-        document.getElementById('modalExcluir').classList.add('active');
-
-        function fecharModalExclusao() {
-            document.getElementById('modalExcluir').classList.remove('active');
-        }
-
-        // Excluir cliente via AJAX
-        function excluirCliente(event) {
-            event.preventDefault();
-
-            const form = document.getElementById('formExcluir');
-            const formData = new FormData(form);
-            const btnExcluir = document.getElementById('btnExcluir');
-
-            // Validar motivo
-            const motivo = document.getElementById('motivo').value.trim();
-            if (motivo.length < 5) {
-                mostrarMensagemExclusao('error', '❌ Informe um motivo com pelo menos 5 caracteres.');
-                return;
-            }
-
-            // Desabilitar botão e mostrar loading
-            btnExcluir.disabled = true;
-            btnExcluir.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Excluindo...';
-
-            // Enviar requisição
-            fetch('', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(async response => {
-                    const data = await response.json();
-                    return data;
-                })
-                .then(data => {
-                    if (data.success) {
-                        mostrarMensagemExclusao('success', data.message);
-
-                        // Recarregar a página após 2 segundos
-                        setTimeout(() => {
-                            location.reload();
-                        }, 2000);
-                    } else {
-                        mostrarMensagemExclusao('error', data.message);
-                        btnExcluir.disabled = false;
-                        btnExcluir.innerHTML = '<i class="fas fa-trash"></i> Confirmar Exclusão';
-                    }
-                })
-                .catch(error => {
-                    console.error('Erro:', error);
-                    mostrarMensagemExclusao('error', '❌ Erro ao excluir cliente. Tente novamente.');
-                    btnExcluir.disabled = false;
-                    btnExcluir.innerHTML = '<i class="fas fa-trash"></i> Confirmar Exclusão';
-                });
-        }
-
-        function mostrarMensagemExclusao(tipo, mensagem) {
-            const mensagemDiv = document.getElementById('modalMensagemExcluir');
-            mensagemDiv.innerHTML = `
-        <div class="alert alert-${tipo === 'success' ? 'success' : 'error'}" style="margin: 10px 0;">
-            <i class="fas fa-${tipo === 'success' ? 'check' : 'exclamation'}-circle"></i> ${mensagem}
-        </div>
-    `;
-        }
-
-        // Adicione também no evento DOMContentLoaded:
-        document.addEventListener('DOMContentLoaded', function() {
-            // ... código existente ...
-
-            // Fechar modal de exclusão ao clicar fora
-            document.getElementById('modalExcluir').addEventListener('click', function(e) {
-                if (e.target === this) {
-                    fecharModalExclusao();
                 }
+            })
+            .catch(error => {
+                console.error('Erro:', error);
+                mostrarMensagemExclusao('error', '❌ Erro ao excluir cliente. Tente novamente.');
+                btnExcluir.disabled = false;
+                btnExcluir.innerHTML = '<i class="fas fa-trash"></i> Confirmar Exclusão';
             });
-
-            // Fechar modal com ESC
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape') {
-                    fecharModalExclusao();
-                    fecharModalCredito();
-                }
-            });
-        });
-    </script>
-</body>
-
-</html>

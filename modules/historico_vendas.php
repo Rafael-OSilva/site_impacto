@@ -1,4 +1,12 @@
 <?php
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+echo "<!-- DEBUG: Iniciando historico_vendas.php -->";
+echo "<!-- PHP_SELF: " . $_SERVER['PHP_SELF'] . " -->";
+echo "<!-- SCRIPT_NAME: " . $_SERVER['SCRIPT_NAME'] . " -->";
+echo "<!-- REQUEST_URI: " . $_SERVER['REQUEST_URI'] . " -->";
+
 require_once '../includes/functions.php';
 verificarLogin();
 

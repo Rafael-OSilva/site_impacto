@@ -1188,28 +1188,268 @@ function receberPagamentoContaComFormaPagamento($connection, $venda_id, $usuario
 /**
  * Cadastrar novo cliente
  */
+/**
+ * Cadastrar novo cliente (VERSÃO CORRIGIDA SIMPLES)
+ */
 function cadastrarCliente($connection, $dados) {
     try {
-        $sql = "INSERT INTO clientes (nome, cpf, email, telefone, valor_credito, usuario_id) 
-                VALUES (:nome, :cpf, :email, :telefone, :valor_credito, :usuario_id)";
+        // Validações básicas
+        if (empty($dados['nome'])) {
+            throw new Exception("Nome do cliente é obrigatório");
+        }
+        
+        if (strlen($dados['nome']) < 3) {
+            throw new Exception("O nome deve ter pelo menos 3 caracteres");
+        }
+        
+        // Formatar CPF
+        $cpf = null;
+        if (!empty($dados['cpf'])) {
+            $cpf = preg_replace('/[^0-9]/', '', $dados['cpf']);
+            
+            // Validar CPF
+            if (!validarCPF($cpf)) {
+                throw new Exception("CPF inválido");
+            }
+            
+            // Verificar se CPF já existe
+            $stmt = $connection->prepare("SELECT id FROM clientes WHERE cpf = ?");
+            $stmt->execute([$cpf]);
+            
+            if ($stmt->rowCount() > 0) {
+                throw new Exception("CPF já cadastrado no sistema");
+            }
+        }
+        
+        // Converter valor do crédito (tratar formato brasileiro)
+        $valor_credito = 0;
+        if (!empty($dados['valor_credito'])) {
+            $valor_str = (string)$dados['valor_credito'];
+            $valor_str = str_replace(['R$', '.', ' '], '', $valor_str); // Remove R$ e pontos
+            $valor_str = str_replace(',', '.', $valor_str); // Substitui vírgula por ponto
+            $valor_credito = floatval($valor_str);
+        }
+        
+        // Verificar usuário logado
+        $usuario_id = $_SESSION['usuario_id'] ?? 1; // Fallback para admin se não houver sessão
+        
+        // Preparar SQL com valores diretos (não usar bindParam com referência)
+        $sql = "INSERT INTO clientes (
+            nome, 
+            cpf, 
+            email, 
+            telefone, 
+            valor_credito, 
+            data_cadastro, 
+            ativo
+        ) VALUES (
+            :nome, 
+            :cpf, 
+            :email, 
+            :telefone, 
+            :valor_credito, 
+            NOW(), 
+            1
+        )";
         
         $stmt = $connection->prepare($sql);
         
-        return $stmt->execute([
-            ':nome' => $dados['nome'],
-            ':cpf' => $dados['cpf'] ?? null,
-            ':email' => $dados['email'] ?? null,
-            ':telefone' => $dados['telefone'] ?? null,
-            ':valor_credito' => $dados['valor_credito'] ?? 0.00,
-            ':usuario_id' => $_SESSION['usuario_id']
-        ]);
+        // Usar bindValue em vez de bindParam (resolve o problema de referência)
+        $stmt->bindValue(':nome', $dados['nome'], PDO::PARAM_STR);
         
-    } catch(PDOException $e) {
-        error_log("Erro ao cadastrar cliente: " . $e->getMessage());
-        return false;
+        if ($cpf) {
+            $stmt->bindValue(':cpf', $cpf, PDO::PARAM_STR);
+        } else {
+            $stmt->bindValue(':cpf', null, PDO::PARAM_NULL);
+        }
+        
+        if (!empty($dados['email'])) {
+            $stmt->bindValue(':email', trim($dados['email']), PDO::PARAM_STR);
+        } else {
+            $stmt->bindValue(':email', null, PDO::PARAM_NULL);
+        }
+        
+        if (!empty($dados['telefone'])) {
+            $stmt->bindValue(':telefone', trim($dados['telefone']), PDO::PARAM_STR);
+        } else {
+            $stmt->bindValue(':telefone', null, PDO::PARAM_NULL);
+        }
+        
+        $stmt->bindValue(':valor_credito', $valor_credito, PDO::PARAM_STR);
+        
+        // Executar
+        if ($stmt->execute()) {
+            $clienteId = $connection->lastInsertId();
+            
+            // Registrar no histórico se houver crédito inicial
+            if ($valor_credito > 0) {
+                registrarHistoricoCredito(
+                    $connection, 
+                    $clienteId, 
+                    $usuario_id,
+                    0, 
+                    $valor_credito, 
+                    "Crédito inicial"
+                );
+            }
+            
+            return $clienteId;
+        } else {
+            $errorInfo = $stmt->errorInfo();
+            throw new Exception("Erro SQL: " . $errorInfo[2]);
+        }
+        
+    } catch (PDOException $e) {
+        // Capturar erros específicos do PDO
+        $errorMessage = "Erro de banco de dados: " . $e->getMessage();
+        
+        // Verificar se é erro de duplicação de CPF
+        if ($e->errorInfo[0] == '23000' && strpos($e->getMessage(), 'cpf') !== false) {
+            $errorMessage = "CPF já cadastrado no sistema";
+        }
+        
+        throw new Exception($errorMessage);
+    } catch (Exception $e) {
+        throw $e;
     }
 }
 
+/**
+ * Função auxiliar para registrar histórico de crédito
+ */
+function registrarHistoricoCredito($connection, $clienteId, $usuarioId, $valorAnterior, $valorNovo, $observacao = '') {
+    try {
+        $sql = "INSERT INTO historico_credito (
+            cliente_id, 
+            usuario_id, 
+            data_alteracao, 
+            valor_anterior, 
+            valor_novo, 
+            observacao
+        ) VALUES (
+            :cliente_id, 
+            :usuario_id, 
+            NOW(), 
+            :valor_anterior, 
+            :valor_novo, 
+            :observacao
+        )";
+        
+        $stmt = $connection->prepare($sql);
+        $stmt->bindValue(':cliente_id', $clienteId, PDO::PARAM_INT);
+        $stmt->bindValue(':usuario_id', $usuarioId, PDO::PARAM_INT);
+        $stmt->bindValue(':valor_anterior', $valorAnterior, PDO::PARAM_STR);
+        $stmt->bindValue(':valor_novo', $valorNovo, PDO::PARAM_STR);
+        $stmt->bindValue(':observacao', $observacao, PDO::PARAM_STR);
+        
+        return $stmt->execute();
+        
+    } catch (Exception $e) {
+        // Silenciar erro do histórico, mas logar
+        error_log("Erro ao registrar histórico de crédito: " . $e->getMessage());
+        return false;
+    }
+}
+/**
+ * Excluir cliente (exclusão lógica - marca como inativo)
+ */
+function excluirCliente($connection, $clienteId, $usuarioId, $motivo = '') {
+    try {
+        // Verificar se o cliente existe e não está inativo
+        $sql = "SELECT nome, ativo FROM clientes WHERE id = :id";
+        $stmt = $connection->prepare($sql);
+        $stmt->execute([':id' => $clienteId]);
+        $cliente = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$cliente) {
+            throw new Exception("Cliente não encontrado");
+        }
+        
+        if ($cliente['ativo'] == 0) {
+            throw new Exception("Cliente já está inativo");
+        }
+        
+        // Verificar se o cliente tem crédito pendente
+        if (floatval($cliente['valor_credito']) > 0) {
+            throw new Exception("Não é possível excluir cliente com crédito disponível. Zere o crédito primeiro.");
+        }
+        
+        // Verificar se o cliente tem vendas pendentes
+        $sql_vendas = "SELECT COUNT(*) as total FROM vendas 
+                      WHERE cliente_id = :cliente_id 
+                      AND (status = '' OR status IS NULL)";
+        $stmt_vendas = $connection->prepare($sql_vendas);
+        $stmt_vendas->execute([':cliente_id' => $clienteId]);
+        $vendas_pendentes = $stmt_vendas->fetch(PDO::FETCH_ASSOC);
+        
+        if ($vendas_pendentes && $vendas_pendentes['total'] > 0) {
+            throw new Exception("Cliente tem vendas pendentes. Finalize as vendas primeiro.");
+        }
+        
+        // Iniciar transação
+        $connection->beginTransaction();
+        
+        // Registrar histórico antes de excluir (opcional)
+        $sql_historico = "INSERT INTO historico_exclusoes 
+                         (cliente_id, usuario_id, nome_cliente, motivo, data_exclusao) 
+                         VALUES (:cliente_id, :usuario_id, :nome_cliente, :motivo, NOW())";
+        $stmt_historico = $connection->prepare($sql_historico);
+        $stmt_historico->execute([
+            ':cliente_id' => $clienteId,
+            ':usuario_id' => $usuarioId,
+            ':nome_cliente' => $cliente['nome'],
+            ':motivo' => $motivo ?: 'Exclusão solicitada'
+        ]);
+        
+        // Marcar como inativo (exclusão lógica)
+        $sql_update = "UPDATE clientes SET 
+                      ativo = 0, 
+                      data_inativacao = NOW(),
+                      usuario_inativacao = :usuario_id
+                      WHERE id = :id";
+        
+        $stmt_update = $connection->prepare($sql_update);
+        $stmt_update->execute([
+            ':usuario_id' => $usuarioId,
+            ':id' => $clienteId
+        ]);
+        
+        $connection->commit();
+        return true;
+        
+    } catch (PDOException $e) {
+        if (isset($connection) && $connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        error_log("Erro ao excluir cliente #$clienteId: " . $e->getMessage());
+        throw new Exception("Erro de banco de dados: " . $e->getMessage());
+    } catch (Exception $e) {
+        if (isset($connection) && $connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        throw $e;
+    }
+}
+
+/**
+ * Buscar cliente por ID (com informações de inativação)
+ */
+function buscarClienteCompleto($connection, $id) {
+    try {
+        $sql = "SELECT c.*, 
+                       u_inativacao.nome as usuario_inativacao_nome
+                FROM clientes c
+                LEFT JOIN usuarios u_inativacao ON c.usuario_inativacao = u_inativacao.id
+                WHERE c.id = :id";
+        $stmt = $connection->prepare($sql);
+        $stmt->execute([':id' => $id]);
+        
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch(PDOException $e) {
+        error_log("Erro ao buscar cliente completo: " . $e->getMessage());
+        return false;
+    }
+}
 /**
  * Listar clientes com crédito disponível
  */
@@ -1335,8 +1575,8 @@ function obterHistoricoCredito($connection, $clienteId, $limite = 10) {
                 LIMIT :limite";
         
         $stmt = $connection->prepare($sql);
-        $stmt->bindParam(':cliente_id', $clienteId);
-        $stmt->bindParam(':limite', $limite, PDO::PARAM_INT);
+        $stmt->bindValue(':cliente_id', $clienteId, PDO::PARAM_INT);
+        $stmt->bindValue(':limite', (int)$limite, PDO::PARAM_INT);
         $stmt->execute();
         
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -1345,6 +1585,7 @@ function obterHistoricoCredito($connection, $clienteId, $limite = 10) {
         return [];
     }
 }
+
 
 /**
  * Validar CPF
