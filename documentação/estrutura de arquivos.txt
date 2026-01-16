@@ -1,0 +1,29 @@
+caixa_impacto/
+│
+├── functions.php (existente)
+├── index.php
+├── config/
+│   └── database.php
+├── includes/
+│   └── footer.php
+│   └── functions.php
+│   └── header.php
+│   └── sidebar.php
+├── lib/
+│   └── tcpdf.php
+│
+├── modules/
+│   ├── abrir_caixa.php
+│   ├── contas_receber.php
+│   ├── credito_client.php
+│   ├── detalhes.php
+│   ├── fechar_caixa.php
+│   ├── registrar_venda.php
+│   ├── relatorios.php
+│   ├── retiradas.php
+│
+├── css/
+│   └── sistema.css
+│
+└── js/
+    └── sistema.js
