@@ -1178,3 +1178,574 @@ function receberPagamentoContaComFormaPagamento($connection, $venda_id, $usuario
         return false;
     }
 }
+
+// ADICIONE ESTAS FUNÇÕES AO SEU functions.php EXISTENTE
+
+// ============================================================================
+// FUNÇÕES PARA GERENCIAMENTO DE CLIENTES E CRÉDITO
+// ============================================================================
+
+/**
+ * Cadastrar novo cliente
+ */
+function cadastrarCliente($connection, $dados) {
+    try {
+        $sql = "INSERT INTO clientes (nome, cpf, email, telefone, valor_credito, usuario_id) 
+                VALUES (:nome, :cpf, :email, :telefone, :valor_credito, :usuario_id)";
+        
+        $stmt = $connection->prepare($sql);
+        
+        return $stmt->execute([
+            ':nome' => $dados['nome'],
+            ':cpf' => $dados['cpf'] ?? null,
+            ':email' => $dados['email'] ?? null,
+            ':telefone' => $dados['telefone'] ?? null,
+            ':valor_credito' => $dados['valor_credito'] ?? 0.00,
+            ':usuario_id' => $_SESSION['usuario_id']
+        ]);
+        
+    } catch(PDOException $e) {
+        error_log("Erro ao cadastrar cliente: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Listar clientes com crédito disponível
+ */
+function listarClientesComCredito($connection) {
+    try {
+        $sql = "SELECT * FROM clientes 
+                WHERE valor_credito > 0 
+                AND ativo = 1 
+                ORDER BY nome ASC";
+        
+        $stmt = $connection->prepare($sql);
+        $stmt->execute();
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch(PDOException $e) {
+        error_log("Erro ao listar clientes com crédito: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Atualizar crédito do cliente com histórico
+ */
+function atualizarCreditoCliente($connection, $clienteId, $novoValor, $observacao = '', $tipo_operacao = 'ajuste') {
+    try {
+        $connection->beginTransaction();
+        
+        // Buscar valor atual
+        $sqlAtual = "SELECT valor_credito, nome FROM clientes WHERE id = :id";
+        $stmt = $connection->prepare($sqlAtual);
+        $stmt->execute([':id' => $clienteId]);
+        $cliente = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$cliente) {
+            throw new Exception("Cliente não encontrado");
+        }
+        
+        // Atualizar crédito
+        $sqlUpdate = "UPDATE clientes 
+                     SET valor_credito = :valor 
+                     WHERE id = :id";
+        
+        $stmt = $connection->prepare($sqlUpdate);
+        $stmt->execute([
+            ':valor' => $novoValor,
+            ':id' => $clienteId
+        ]);
+        
+        // Registrar histórico
+        $sqlHist = "INSERT INTO historico_credito 
+                   (cliente_id, usuario_id, valor_anterior, valor_novo, tipo_operacao, observacao) 
+                   VALUES (:cliente_id, :usuario_id, :valor_anterior, :valor_novo, :tipo_operacao, :observacao)";
+        
+        $stmt = $connection->prepare($sqlHist);
+        $stmt->execute([
+            ':cliente_id' => $clienteId,
+            ':usuario_id' => $_SESSION['usuario_id'],
+            ':valor_anterior' => $cliente['valor_credito'],
+            ':valor_novo' => $novoValor,
+            ':tipo_operacao' => $tipo_operacao,
+            ':observacao' => $observacao
+        ]);
+        
+        $connection->commit();
+        return true;
+        
+    } catch(PDOException $e) {
+        $connection->rollBack();
+        error_log("Erro ao atualizar crédito: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Buscar cliente por ID
+ */
+function buscarClientePorId($connection, $id) {
+    try {
+        $sql = "SELECT * FROM clientes WHERE id = :id";
+        $stmt = $connection->prepare($sql);
+        $stmt->execute([':id' => $id]);
+        
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch(PDOException $e) {
+        error_log("Erro ao buscar cliente: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Listar todos os clientes
+ */
+function listarTodosClientes($connection, $ativo = true) {
+    try {
+        $sql = "SELECT id, nome, cpf, telefone, valor_credito FROM clientes WHERE 1=1";
+        
+        if ($ativo) {
+            $sql .= " AND ativo = 1";
+        }
+        
+        $sql .= " ORDER BY nome";
+        
+        $stmt = $connection->prepare($sql);
+        $stmt->execute();
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch(PDOException $e) {
+        error_log("Erro ao listar clientes: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Obter histórico de crédito do cliente
+ */
+function obterHistoricoCredito($connection, $clienteId, $limite = 10) {
+    try {
+        $sql = "SELECT h.*, u.nome as usuario_nome 
+                FROM historico_credito h
+                JOIN usuarios u ON h.usuario_id = u.id
+                WHERE h.cliente_id = :cliente_id
+                ORDER BY h.data_alteracao DESC
+                LIMIT :limite";
+        
+        $stmt = $connection->prepare($sql);
+        $stmt->bindParam(':cliente_id', $clienteId);
+        $stmt->bindParam(':limite', $limite, PDO::PARAM_INT);
+        $stmt->execute();
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch(PDOException $e) {
+        error_log("Erro ao obter histórico de crédito: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Validar CPF
+ */
+function validarCPF($cpf) {
+    // Remove caracteres não numéricos
+    $cpf = preg_replace('/[^0-9]/', '', $cpf);
+    
+    // Verifica se tem 11 dígitos
+    if (strlen($cpf) != 11) {
+        return false;
+    }
+    
+    // Verifica se todos os dígitos são iguais
+    if (preg_match('/(\d)\1{10}/', $cpf)) {
+        return false;
+    }
+    
+    // Calcula o primeiro dígito verificador
+    $soma = 0;
+    for ($i = 0; $i < 9; $i++) {
+        $soma += $cpf[$i] * (10 - $i);
+    }
+    $resto = $soma % 11;
+    $digito1 = ($resto < 2) ? 0 : 11 - $resto;
+    
+    // Calcula o segundo dígito verificador
+    $soma = 0;
+    for ($i = 0; $i < 10; $i++) {
+        $soma += $cpf[$i] * (11 - $i);
+    }
+    $resto = $soma % 11;
+    $digito2 = ($resto < 2) ? 0 : 11 - $resto;
+    
+    // Verifica se os dígitos calculados conferem com os informados
+    return ($cpf[9] == $digito1 && $cpf[10] == $digito2);
+}
+
+// ============================================================================
+// FUNÇÕES PARA DETALHES DE VENDAS/COMPRAS
+// ============================================================================
+
+/**
+ * Obter detalhes completos de uma venda específica
+ */
+function obterDetalhesVenda($connection, $venda_id) {
+    try {
+        $sql = "SELECT 
+                    v.id,
+                    v.caixa_id,
+                    v.usuario_id,
+                    v.data_venda,
+                    v.valor_total,
+                    v.forma_pagamento_id,
+                    v.descricao,
+                    v.status,
+                    v.visivel_contas_receber,
+                    v.data_recebimento,
+                    c.status as caixa_status,
+                    c.data_abertura,
+                    c.data_fechamento,
+                    u.nome as usuario_nome,
+                    fp.nome as forma_pagamento_nome
+                FROM vendas v
+                JOIN caixa c ON v.caixa_id = c.id
+                JOIN usuarios u ON v.usuario_id = u.id
+                JOIN formas_pagamento fp ON v.forma_pagamento_id = fp.id
+                WHERE v.id = ?";
+        
+        $stmt = $connection->prepare($sql);
+        $stmt->execute([$venda_id]);
+        
+        $resultado = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        // Debug: verificar o que está sendo retornado
+        error_log("Detalhes da venda #$venda_id encontrados: " . ($resultado ? 'Sim' : 'Não'));
+        if ($resultado) {
+            error_log("Dados da venda: " . print_r($resultado, true));
+        }
+        
+        return $resultado;
+        
+    } catch(PDOException $e) {
+        error_log("Erro ao buscar detalhes da venda #$venda_id: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Verificar se uma venda existe
+ */
+function verificarVendaExiste($connection, $venda_id) {
+    try {
+        $sql = "SELECT COUNT(*) as total FROM vendas WHERE id = ?";
+        $stmt = $connection->prepare($sql);
+        $stmt->execute([$venda_id]);
+        $resultado = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        return ($resultado && $resultado['total'] > 0);
+        
+    } catch(PDOException $e) {
+        error_log("Erro ao verificar venda #$venda_id: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Excluir venda (apenas se caixa estiver aberto)
+ */
+function excluirVenda($connection, $venda_id) {
+    try {
+        // Verificar se a venda existe
+        $sql_check = "SELECT caixa_id FROM vendas WHERE id = ?";
+        $stmt_check = $connection->prepare($sql_check);
+        $stmt_check->execute([$venda_id]);
+        $venda = $stmt_check->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$venda) {
+            throw new Exception("Venda não encontrada");
+        }
+        
+        // Verificar se o caixa está aberto
+        $caixa_aberto = obterCaixaAberto($connection);
+        if (!$caixa_aberto) {
+            throw new Exception("Não é possível excluir venda: caixa fechado");
+        }
+        
+        // Verificar se a venda pertence ao caixa aberto
+        if ($venda['caixa_id'] != $caixa_aberto['id']) {
+            throw new Exception("Não é possível excluir venda de outro caixa");
+        }
+        
+        // Iniciar transação
+        $connection->beginTransaction();
+        
+        // Excluir a venda
+        $sql_delete = "DELETE FROM vendas WHERE id = ?";
+        $stmt_delete = $connection->prepare($sql_delete);
+        $stmt_delete->execute([$venda_id]);
+        
+        // Verificar se foi excluído
+        if ($stmt_delete->rowCount() === 0) {
+            $connection->rollBack();
+            throw new Exception("Erro ao excluir venda");
+        }
+        
+        $connection->commit();
+        return true;
+        
+    } catch(PDOException $e) {
+        if (isset($connection) && $connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        error_log("Erro ao excluir venda #$venda_id: " . $e->getMessage());
+        throw new Exception("Erro ao excluir venda: " . $e->getMessage());
+    } catch(Exception $e) {
+        if (isset($connection) && $connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        error_log("Erro ao excluir venda #$venda_id: " . $e->getMessage());
+        throw new Exception($e->getMessage());
+    }
+}
+
+/**
+ * Listar vendas com filtros avançados
+ */
+function listarVendasComFiltros($connection, $filtros = []) {
+    try {
+        $sql = "SELECT v.*, 
+                       c.data_abertura,
+                       c.data_fechamento,
+                       u.nome as usuario_nome,
+                       fp.nome as forma_pagamento_nome,
+                       cl.nome as cliente_nome
+                FROM vendas v
+                JOIN caixa c ON v.caixa_id = c.id
+                JOIN usuarios u ON v.usuario_id = u.id
+                JOIN formas_pagamento fp ON v.forma_pagamento_id = fp.id
+                LEFT JOIN clientes cl ON v.cliente_id = cl.id
+                WHERE 1=1";
+        
+        $params = [];
+        
+        // Filtro por data inicial
+        if (!empty($filtros['data_inicio'])) {
+            $sql .= " AND DATE(v.data_venda) >= :data_inicio";
+            $params[':data_inicio'] = $filtros['data_inicio'];
+        }
+        
+        // Filtro por data final
+        if (!empty($filtros['data_fim'])) {
+            $sql .= " AND DATE(v.data_venda) <= :data_fim";
+            $params[':data_fim'] = $filtros['data_fim'];
+        }
+        
+        // Filtro por cliente
+        if (!empty($filtros['cliente_id'])) {
+            $sql .= " AND v.cliente_id = :cliente_id";
+            $params[':cliente_id'] = $filtros['cliente_id'];
+        }
+        
+        // Filtro por forma de pagamento
+        if (!empty($filtros['forma_pagamento_id'])) {
+            $sql .= " AND v.forma_pagamento_id = :forma_pagamento_id";
+            $params[':forma_pagamento_id'] = $filtros['forma_pagamento_id'];
+        }
+        
+        // Filtro por status
+        if (!empty($filtros['status'])) {
+            if ($filtros['status'] === 'concluida') {
+                $sql .= " AND v.status = 'concluida'";
+            } elseif ($filtros['status'] === 'pendente') {
+                $sql .= " AND (v.status = '' OR v.status IS NULL)";
+            } elseif ($filtros['status'] === 'todas') {
+                // Mostrar todas
+            }
+        } else {
+            // Padrão: mostrar apenas concluídas
+            $sql .= " AND v.status = 'concluida'";
+        }
+        
+        // Filtro por valor mínimo
+        if (!empty($filtros['valor_min'])) {
+            $sql .= " AND v.valor_total >= :valor_min";
+            $params[':valor_min'] = $filtros['valor_min'];
+        }
+        
+        // Filtro por valor máximo
+        if (!empty($filtros['valor_max'])) {
+            $sql .= " AND v.valor_total <= :valor_max";
+            $params[':valor_max'] = $filtros['valor_max'];
+        }
+        
+        $sql .= " ORDER BY v.data_venda DESC";
+        
+        // Limite opcional
+        if (!empty($filtros['limite'])) {
+            $sql .= " LIMIT :limite";
+            $params[':limite'] = (int)$filtros['limite'];
+        }
+        
+        $stmt = $connection->prepare($sql);
+        
+        // Bind dos parâmetros
+        foreach ($params as $key => $value) {
+            if ($key === ':limite') {
+                $stmt->bindValue($key, $value, PDO::PARAM_INT);
+            } else {
+                $stmt->bindValue($key, $value);
+            }
+        }
+        
+        $stmt->execute();
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+    } catch(PDOException $e) {
+        error_log("Erro ao listar vendas com filtros: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Obter estatísticas de vendas por período
+ */
+function obterEstatisticasVendas($connection, $data_inicio, $data_fim) {
+    try {
+        $data_fim_ajustada = $data_fim . ' 23:59:59';
+        
+        $sql = "SELECT 
+                    COUNT(*) as total_vendas,
+                    SUM(v.valor_total) as valor_total,
+                    AVG(v.valor_total) as media_valor,
+                    MIN(v.valor_total) as menor_venda,
+                    MAX(v.valor_total) as maior_venda,
+                    COUNT(DISTINCT v.usuario_id) as usuarios_ativos,
+                    COUNT(DISTINCT v.cliente_id) as clientes_atendidos
+                FROM vendas v
+                WHERE v.data_venda BETWEEN :data_inicio AND :data_fim_ajustada
+                AND v.status = 'concluida'";
+        
+        $stmt = $connection->prepare($sql);
+        $stmt->bindParam(':data_inicio', $data_inicio);
+        $stmt->bindParam(':data_fim_ajustada', $data_fim_ajustada);
+        $stmt->execute();
+        
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+        
+    } catch(PDOException $e) {
+        error_log("Erro ao obter estatísticas de vendas: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Registrar venda com cliente e crédito (se aplicável)
+ */
+function registrarVendaComCliente($connection, $caixa_id, $usuario_id, $valor_total, $forma_pagamento_id, $descricao, $cliente_id = null, $usar_credito = false) {
+    try {
+        $status = 'concluida';
+        
+        // Verificar se é "A Receber"
+        if ($forma_pagamento_id == 5 || $forma_pagamento_id == 7) {
+            $status = ''; // Status vazio para vendas a receber
+        }
+        
+        // Se usar crédito do cliente
+        if ($usar_credito && $cliente_id) {
+            $cliente = buscarClientePorId($connection, $cliente_id);
+            if ($cliente && $cliente['valor_credito'] >= $valor_total) {
+                // Deduzir do crédito
+                $novo_credito = $cliente['valor_credito'] - $valor_total;
+                atualizarCreditoCliente(
+                    $connection, 
+                    $cliente_id, 
+                    $novo_credito, 
+                    "Compra realizada no valor de R$ " . number_format($valor_total, 2, ',', '.'),
+                    'compra'
+                );
+                $forma_pagamento_id = 8; // ID para pagamento com crédito (precisa criar)
+            } else {
+                throw new Exception("Crédito insuficiente ou cliente não encontrado");
+            }
+        }
+        
+        // Registrar a venda
+        $sql = "INSERT INTO vendas (caixa_id, usuario_id, data_venda, valor_total, forma_pagamento_id, descricao, status, cliente_id) 
+                VALUES (?, ?, NOW(), ?, ?, ?, ?, ?)";
+
+        $stmt = $connection->prepare($sql);
+        $stmt->execute([$caixa_id, $usuario_id, $valor_total, $forma_pagamento_id, $descricao, $status, $cliente_id]);
+
+        $venda_id = $connection->lastInsertId();
+        
+        // Se foi pago com crédito, registrar como entrada no caixa
+        if ($usar_credito && $cliente_id) {
+            // Aqui você pode adicionar lógica para registrar no caixa
+            // como se fosse uma venda normal, já que o crédito é como dinheiro
+        }
+        
+        return $venda_id;
+        
+    } catch(PDOException $e) {
+        error_log("Erro ao registrar venda com cliente: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Buscar vendas por cliente
+ */
+function buscarVendasPorCliente($connection, $cliente_id) {
+    try {
+        $sql = "SELECT v.*, 
+                       fp.nome as forma_pagamento_nome,
+                       u.nome as usuario_nome,
+                       c.data_abertura
+                FROM vendas v
+                JOIN formas_pagamento fp ON v.forma_pagamento_id = fp.id
+                JOIN usuarios u ON v.usuario_id = u.id
+                JOIN caixa ca ON v.caixa_id = ca.id
+                WHERE v.cliente_id = :cliente_id
+                ORDER BY v.data_venda DESC";
+        
+        $stmt = $connection->prepare($sql);
+        $stmt->execute([':cliente_id' => $cliente_id]);
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+    } catch(PDOException $e) {
+        error_log("Erro ao buscar vendas por cliente: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Obter resumo financeiro por cliente
+ */
+function obterResumoCliente($connection, $cliente_id) {
+    try {
+        $sql = "SELECT 
+                    c.nome,
+                    c.valor_credito,
+                    COUNT(v.id) as total_compras,
+                    SUM(CASE WHEN v.status = 'concluida' THEN v.valor_total ELSE 0 END) as total_gasto,
+                    SUM(CASE WHEN v.status = '' OR v.status IS NULL THEN v.valor_total ELSE 0 END) as total_pendente,
+                    MAX(v.data_venda) as ultima_compra,
+                    MIN(v.data_venda) as primeira_compra
+                FROM clientes c
+                LEFT JOIN vendas v ON c.id = v.cliente_id
+                WHERE c.id = :cliente_id
+                GROUP BY c.id, c.nome, c.valor_credito";
+        
+        $stmt = $connection->prepare($sql);
+        $stmt->execute([':cliente_id' => $cliente_id]);
+        
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+        
+    } catch(PDOException $e) {
+        error_log("Erro ao obter resumo do cliente: " . $e->getMessage());
+        return [];
+    }
+}
