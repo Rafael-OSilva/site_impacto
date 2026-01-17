@@ -1,10 +1,17 @@
 <?php
 session_start();
-require_once '../config/database.php';
-require_once '../includes/functions.php';
-
 // Verificar se o usuário está logado
-verificarLogin();
+if (!isset($_SESSION['usuario_id'])) {
+    header('Location: ../login.php');
+    exit;
+}
+
+// Definir o diretório base
+define('BASE_PATH', dirname(__DIR__));
+
+// Incluir configurações e funções com caminho absoluto
+require_once BASE_PATH . '/config/database.php';
+require_once BASE_PATH . '/functions.php';
 
 // Conectar ao banco de dados
 $db = new Database();

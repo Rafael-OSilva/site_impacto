@@ -1,20 +1,33 @@
 <?php
 session_start();
-require_once '../config/database.php';
-require_once '../includes/functions.php';
+// Verificar se o usuário está logado
+if (!isset($_SESSION['usuario_id'])) {
+    header('Location: ../login.php');
+    exit;
+}
 
-// Protege a página e conecta ao banco
-verificarLogin();
+// Definir o diretório base
+define('BASE_PATH', dirname(__DIR__));
+
+// Incluir configurações e funções com caminho absoluto
+require_once BASE_PATH . '/config/database.php';
+require_once BASE_PATH . '/functions.php';
+
+// Conectar ao banco de dados
 $db = new Database();
 $connection = $db->getConnection();
 
-// Verifica o status do caixa e pega as informações dele
+// Verificar se o caixa já está aberto
 $status_caixa = verificarStatusCaixa($connection);
+$caixa_aberto = $status_caixa;
+
+// Obter informações do caixa aberto
 $caixa_info = null;
 if ($status_caixa) {
     $caixa_info = obterCaixaAberto($connection);
 }
 
+// Inicializar variáveis de mensagem
 $mensagem = '';
 $erro = '';
 
@@ -35,6 +48,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['registrar_retirada']))
         } else {
             if (registrarRetirada($connection, $caixa_id, $usuario_id, $valor, $motivo)) {
                 $mensagem = "Retirada registrada com sucesso!";
+                
+                // Recarregar a página para mostrar atualizações
+                header("Refresh: 2; url=retiradas.php");
             } else {
                 $erro = "Erro ao registrar a retirada.";
             }
@@ -47,6 +63,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['excluir_retirada'])) {
     $retirada_id = filter_input(INPUT_POST, 'retirada_id', FILTER_VALIDATE_INT);
     if (excluirRetirada($connection, $retirada_id, $_SESSION['usuario_id'])) {
         $mensagem = "Retirada excluída com sucesso.";
+        
+        // Recarregar a página para mostrar atualizações
+        header("Refresh: 2; url=retiradas.php");
     } else {
         $erro = "Erro ao excluir a retirada.";
     }
@@ -56,6 +75,52 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['excluir_retirada'])) {
 $resumo_caixa = null;
 $retiradas_hoje = [];
 if ($status_caixa && $caixa_info) {
+    // Incluir a função se não existir
+    if (!function_exists('calcularResumoCaixaAberto')) {
+        // Função alternativa se a original não estiver disponível
+        function calcularResumoCaixaAberto($connection, $caixa_id) {
+            $resumo = [
+                'valor_inicial' => 0,
+                'vendas_dinheiro' => 0,
+                'vendas_a_receber' => 0,
+                'total_retiradas' => 0,
+                'saldo_disponivel' => 0,
+                'total_vendas_concluidas' => 0
+            ];
+
+            try {
+                // 1. Valor inicial
+                $caixa = obterCaixaAberto($connection);
+                $resumo['valor_inicial'] = $caixa['valor_inicial'] ?? 0;
+
+                // 2. Vendas em Dinheiro (ID 1) - APENAS CONCLUÍDAS
+                $query_vendas_dinheiro = "SELECT SUM(valor_total) as total FROM vendas 
+                                 WHERE caixa_id = :caixa_id AND forma_pagamento_id = 1 AND status = 'concluida'";
+                $stmt_vendas_dinheiro = $connection->prepare($query_vendas_dinheiro);
+                $stmt_vendas_dinheiro->bindParam(':caixa_id', $caixa_id);
+                $stmt_vendas_dinheiro->execute();
+                $total_vendas_dinheiro = $stmt_vendas_dinheiro->fetch(PDO::FETCH_ASSOC);
+                $resumo['vendas_dinheiro'] = $total_vendas_dinheiro['total'] ?? 0;
+
+                // 3. Total de Retiradas
+                $query_retiradas = "SELECT SUM(valor) as total FROM retiradas WHERE caixa_id = :caixa_id";
+                $stmt_retiradas = $connection->prepare($query_retiradas);
+                $stmt_retiradas->bindParam(':caixa_id', $caixa_id);
+                $stmt_retiradas->execute();
+                $total_retiradas = $stmt_retiradas->fetch(PDO::FETCH_ASSOC);
+                $resumo['total_retiradas'] = $total_retiradas['total'] ?? 0;
+
+                // 6. Saldo disponível em dinheiro
+                $resumo['saldo_disponivel'] = $resumo['valor_inicial'] + $resumo['vendas_dinheiro'] - $resumo['total_retiradas'];
+
+                return $resumo;
+            } catch (PDOException $e) {
+                error_log("Erro ao calcular resumo do caixa: " . $e->getMessage());
+                return $resumo;
+            }
+        }
+    }
+    
     $resumo_caixa = calcularResumoCaixaAberto($connection, $caixa_info['id']);
     $retiradas_hoje = obterRetiradasDoCaixaAberto($connection, $caixa_info['id']);
 }
@@ -381,7 +446,6 @@ function getReasonClass($motivo)
                 opacity: 0;
                 transform: translateY(30px);
             }
-
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -497,6 +561,12 @@ function getReasonClass($motivo)
             border-radius: 8px;
             margin: 15px 0;
         }
+        
+        /* Estilo para inputs desabilitados */
+        input[readonly] {
+            background-color: #f8f9fa !important;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 
@@ -508,13 +578,13 @@ function getReasonClass($motivo)
         <main>
             <h1 class="page-title"><i class="fas fa-money-bill-wave"></i> Retiradas em Dinheiro</h1>
 
-            <?php if ($mensagem): ?>
+            <?php if (!empty($mensagem)): ?>
                 <div class="alert-success">
                     <i class="fas fa-check-circle"></i> <?= $mensagem ?>
                 </div>
             <?php endif; ?>
 
-            <?php if ($erro): ?>
+            <?php if (!empty($erro)): ?>
                 <div class="alert-error">
                     <i class="fas fa-exclamation-circle"></i> <?= $erro ?>
                 </div>
@@ -531,7 +601,7 @@ function getReasonClass($motivo)
                         <div class="summary-icon">
                             <i class="fas fa-cash-register"></i>
                         </div>
-                        <div class="summary-value"><?= formatarMoeda($resumo_caixa['valor_inicial']) ?></div>
+                        <div class="summary-value"><?= isset($resumo_caixa['valor_inicial']) ? formatarMoeda($resumo_caixa['valor_inicial']) : 'R$ 0,00' ?></div>
                         <div class="summary-label">Saldo Inicial</div>
                     </div>
 
@@ -539,7 +609,7 @@ function getReasonClass($motivo)
                         <div class="summary-icon">
                             <i class="fas fa-shopping-cart"></i>
                         </div>
-                        <div class="summary-value"><?= formatarMoeda($resumo_caixa['vendas_dinheiro']) ?></div>
+                        <div class="summary-value"><?= isset($resumo_caixa['vendas_dinheiro']) ? formatarMoeda($resumo_caixa['vendas_dinheiro']) : 'R$ 0,00' ?></div>
                         <div class="summary-label">Vendas em Dinheiro</div>
                     </div>
 
@@ -547,7 +617,7 @@ function getReasonClass($motivo)
                         <div class="summary-icon">
                             <i class="fas fa-money-bill-wave"></i>
                         </div>
-                        <div class="summary-value"><?= formatarMoeda($resumo_caixa['total_retiradas']) ?></div>
+                        <div class="summary-value"><?= isset($resumo_caixa['total_retiradas']) ? formatarMoeda($resumo_caixa['total_retiradas']) : 'R$ 0,00' ?></div>
                         <div class="summary-label">Total Retiradas</div>
                     </div>
 
@@ -555,7 +625,7 @@ function getReasonClass($motivo)
                         <div class="summary-icon">
                             <i class="fas fa-wallet"></i>
                         </div>
-                        <div class="summary-value"><?= formatarMoeda($resumo_caixa['saldo_disponivel']) ?></div>
+                        <div class="summary-value"><?= isset($resumo_caixa['saldo_disponivel']) ? formatarMoeda($resumo_caixa['saldo_disponivel']) : 'R$ 0,00' ?></div>
                         <div class="summary-label">Saldo Disponível</div>
                     </div>
                 </div>
@@ -588,7 +658,7 @@ function getReasonClass($motivo)
                                 <label>
                                     <i class="fas fa-user"></i> Responsável
                                 </label>
-                                <input type="text" value="<?= htmlspecialchars($_SESSION['usuario_nome']) ?>" readonly
+                                <input type="text" value="<?= htmlspecialchars($_SESSION['usuario_nome'] ?? 'Administrador') ?>" readonly
                                     style="background-color: #f8f9fa;">
                             </div>
 
@@ -603,7 +673,7 @@ function getReasonClass($motivo)
                     <div class="card-header">
                         <span><i class="fas fa-history"></i> Histórico de Retiradas</span>
                         <span class="total-amount" style="color: #dc3545; font-weight: bold;">
-                            Total: <?= formatarMoeda($resumo_caixa['total_retiradas']) ?>
+                            Total: <?= isset($resumo_caixa['total_retiradas']) ? formatarMoeda($resumo_caixa['total_retiradas']) : 'R$ 0,00' ?>
                         </span>
                     </div>
                     <div class="card-body">
@@ -668,6 +738,36 @@ function getReasonClass($motivo)
         <?php include '../includes/footer.php'; ?>
     </div>
     <script src="../js/scripts.js"></script>
+    <script>
+        // Validação do formulário de retirada
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.querySelector('form[method="POST"]');
+            const valorInput = document.getElementById('valor');
+            const motivoInput = document.getElementById('motivo');
+            
+            if (form && valorInput && motivoInput) {
+                form.addEventListener('submit', function(e) {
+                    const valor = parseFloat(valorInput.value);
+                    const motivo = motivoInput.value.trim();
+                    
+                    if (!valor || valor <= 0) {
+                        e.preventDefault();
+                        alert('Por favor, insira um valor válido para a retirada (maior que zero).');
+                        valorInput.focus();
+                        return false;
+                    }
+                    
+                    if (!motivo) {
+                        e.preventDefault();
+                        alert('Por favor, informe o motivo da retirada.');
+                        motivoInput.focus();
+                        return false;
+                    }
+                    
+                    return true;
+                });
+            }
+        });
+    </script>
 </body>
-
 </html>

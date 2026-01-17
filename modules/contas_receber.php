@@ -1,16 +1,27 @@
 <?php
 session_start();
-require_once '../config/database.php';
-require_once '../includes/functions.php';
+// Verificar se o usuário está logado
+if (!isset($_SESSION['usuario_id'])) {
+    header('Location: ../login.php');
+    exit;
+}
 
-verificarLogin();
+// Definir o diretório base
+define('BASE_PATH', dirname(__DIR__));
+
+// Incluir configurações e funções com caminho absoluto
+require_once BASE_PATH . '/config/database.php';
+require_once BASE_PATH . '/functions.php';
+
+// Conectar ao banco de dados
 $db = new Database();
 $connection = $db->getConnection();
 
-// Verificar se há caixa aberto
+// Verificar se o caixa já está aberto
+$status_caixa = verificarStatusCaixa($connection);
 $caixa_aberto = verificarStatusCaixa($connection);
-$caixa_info = $caixa_aberto ? obterCaixaAberto($connection) : null;
 
+// Inicializar variáveis de mensagem
 $mensagem = '';
 $erro = '';
 
@@ -35,6 +46,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['receber_conta'])) {
             // Registrar o recebimento
             if (receberPagamentoContaComFormaPagamento($connection, $venda_id, $_SESSION['usuario_id'], $forma_pagamento_id)) {
                 $mensagem = "Pagamento recebido com sucesso! Valor: " . formatarMoeda($venda['valor_total']);
+                
+                // Recarregar a lista de contas a receber
+                header("Refresh: 2; url=contas_receber.php");
             } else {
                 $erro = "Erro ao registrar o recebimento. Tente novamente.";
             }
@@ -222,6 +236,36 @@ $estatisticas = obterEstatisticasContasAReceber($connection);
             margin: 10px 0;
             font-size: 0.9rem;
         }
+
+        /* Estilos adicionais para melhor visualização */
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        .badge-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .badge-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
     </style>
 </head>
 <body>
@@ -234,13 +278,13 @@ $estatisticas = obterEstatisticasContasAReceber($connection);
                 <i class="fas fa-money-bill-wave"></i> Contas a Receber
             </h1>
 
-            <?php if ($mensagem): ?>
+            <?php if (!empty($mensagem)): ?>
                 <div class="alert alert-success">
                     <i class="fas fa-check-circle"></i> <?= $mensagem ?>
                 </div>
             <?php endif; ?>
 
-            <?php if ($erro): ?>
+            <?php if (!empty($erro)): ?>
                 <div class="alert alert-error">
                     <i class="fas fa-exclamation-circle"></i> <?= $erro ?>
                 </div>
@@ -362,7 +406,7 @@ $estatisticas = obterEstatisticasContasAReceber($connection);
                                     <td>
                                         <?php if ($caixa_aberto): ?>
                                             <button class="btn-receber" 
-                                                    onclick="openPaymentModal(<?= $conta['id'] ?>, '<?= htmlspecialchars($cliente_nome) ?>', <?= $conta['valor_total'] ?>, '<?= date('d/m/Y', strtotime($conta['data_venda'])) ?>')">
+                                                    onclick="openPaymentModal(<?= $conta['id'] ?>, '<?= htmlspecialchars(addslashes($cliente_nome)) ?>', <?= $conta['valor_total'] ?>, '<?= date('d/m/Y', strtotime($conta['data_venda'])) ?>')">
                                                 <i class="fas fa-hand-holding-usd"></i> Receber
                                             </button>
                                         <?php else: ?>
@@ -490,6 +534,22 @@ $estatisticas = obterEstatisticasContasAReceber($connection);
                 if (e.target === this) {
                     closePaymentModal();
                 }
+            });
+
+            // Validar formulário
+            document.getElementById('paymentForm').addEventListener('submit', function(e) {
+                if (!selectedPaymentMethod) {
+                    e.preventDefault();
+                    alert('Por favor, selecione uma forma de pagamento.');
+                    return false;
+                }
+                
+                if (!confirm('Confirmar recebimento deste valor?')) {
+                    e.preventDefault();
+                    return false;
+                }
+                
+                return true;
             });
         });
     </script>

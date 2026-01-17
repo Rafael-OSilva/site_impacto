@@ -49,8 +49,8 @@ $is_module_page = (strpos($_SERVER['PHP_SELF'], 'modules/') !== false);
     </div>
     
     <!-- CORREÇÃO AQUI: Link para Histórico de Vendas -->
-    <div class="menu-item <?= ($current_page == 'historico_vendas.php') ? 'active' : '' ?>">
-        <a href="<?= $is_module_page ? 'historico_vendas.php' : 'modules/historico_vendas.php' ?>">
+    <div class="menu-item <?= ($current_page == 'historico_credito.php') ? 'active' : '' ?>">
+        <a href="<?= $is_module_page ? 'historico_credito.php' : 'modules/historico_credito.php' ?>">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-clock-history" viewBox="0 0 16 16">
                 <path d="M8.515 1.019A7 7 0 0 0 8 1V0a8 8 0 0 1 .589.022zm2.004.45a7 7 0 0 0-.985-.299l.219-.976c.383.086.76.2 1.126.342zm1.37.71a7 7 0 0 0-.439-.27l.493-.87a8 8 0 0 1 .979.654l-.615.789a7 7 0 0 0-.418-.302zm1.834 1.79a7 7 0 0 0-.653-.796l.724-.69c.27.285.52.59.747.91zm.744 1.352a7 7 0 0 0-.214-.468l.893-.45a8 8 0 0 1 .45 1.088l-.95.313a7 7 0 0 0-.179-.483m.53 2.507a7 7 0 0 0-.1-1.025l.985-.17c.067.386.106.78.116 1.17zM7 1h2a0 0 0 0 1 0V0a8 8 0 0 1 2.734.355l-.256.967a7 7 0 0 0-2.478-.322"/>
                 <path d="M8 14a7 7 0 1 0 0-14 7 7 0 0 0 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>

@@ -8,11 +8,12 @@ if (!isset($_SESSION['usuario_id'])) {
 
 // Incluir configurações e funções
 require_once 'config/database.php';
-require_once 'includes/functions.php';
+require_once 'functions.php'; // AGORA ESTÁ NA RAIZ, não em includes/
 
 // Conectar ao banco de dados
 $db = new Database();
 $connection = $db->getConnection();
+
 
 // Obter dados para o dashboard
 $hoje = date('Y-m-d');

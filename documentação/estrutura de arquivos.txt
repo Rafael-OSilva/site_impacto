@@ -1,17 +1,23 @@
 caixa_impacto/
 │
-├── functions.php (existente)
+├── functions.php (arquivo principal que inclui todos os outros)
 ├── index.php
 ├── config/
 │   └── database.php
 ├── includes/
+│   ├── functions/
+│   │   ├── functions_caixa.php
+│   │   ├── functions_relatorios.php
+│   │   ├── functions_clientes.php
+│   │   ├── functions_vendas.php
+│   │   ├── functions_contas_receber.php
+│   │   ├── functions_gerais.php
+│   │   └── functions_helpers.php
 │   └── footer.php
-│   └── functions.php
 │   └── header.php
 │   └── sidebar.php
 ├── lib/
 │   └── tcpdf.php
-│
 ├── modules/
 │   ├── abrir_caixa.php
 │   ├── contas_receber.php
@@ -20,10 +26,8 @@ caixa_impacto/
 │   ├── fechar_caixa.php
 │   ├── registrar_venda.php
 │   ├── relatorios.php
-│   ├── retiradas.php
-│
+│   └── retiradas.php
 ├── css/
 │   └── sistema.css
-│
 └── js/
     └── sistema.js

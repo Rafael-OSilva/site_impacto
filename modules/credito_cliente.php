@@ -11,8 +11,8 @@ error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
 // Incluir configurações e funções
-require_once '../config/database.php';
-require_once '../includes/functions.php';
+require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../functions.php';
 
 // Conectar ao banco de dados
 try {
@@ -22,6 +22,7 @@ try {
     die("❌ Erro de conexão com o banco: " . $e->getMessage());
 }
 
+// INICIALIZAR VARIÁVEIS PARA EVITAR ERROS
 $titulo = "Crédito de Clientes";
 $mensagem = '';
 $erro = '';
@@ -484,13 +485,13 @@ $is_module_page = true;
             </h1>
 
             <!-- Mensagens -->
-            <?php if ($mensagem): ?>
+            <?php if (!empty($mensagem)): ?>
                 <div class="alert alert-success">
                     <i class="fas fa-check-circle"></i> <?= htmlspecialchars($mensagem) ?>
                 </div>
             <?php endif; ?>
 
-            <?php if ($erro): ?>
+            <?php if (!empty($erro)): ?>
                 <div class="alert alert-error">
                     <i class="fas fa-exclamation-circle"></i> <?= htmlspecialchars($erro) ?>
                 </div>

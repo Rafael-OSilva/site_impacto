@@ -1,11 +1,127 @@
 <?php
 session_start();
-require_once '../config/database.php';
-require_once '../includes/functions.php';
+// Verificar se o usuário está logado
+if (!isset($_SESSION['usuario_id'])) {
+    header('Location: ../login.php');
+    exit;
+}
 
-verificarLogin();
+// Definir o diretório base
+define('BASE_PATH', dirname(__DIR__));
+
+// Incluir configurações e funções com caminho absoluto
+require_once BASE_PATH . '/config/database.php';
+require_once BASE_PATH . '/functions.php';
+
+// Conectar ao banco de dados
 $db = new Database();
 $connection = $db->getConnection();
+
+// Verificar se o caixa já está aberto
+$status_caixa = verificarStatusCaixa($connection);
+$caixa_aberto = verificarStatusCaixa($connection);
+
+// ADICIONAR AS FUNÇÕES QUE ESTÃO FALTANDO
+if (!function_exists('obterResumoPagamentos')) {
+    function obterResumoPagamentos($connection, $data_inicial, $data_final)
+    {
+        try {
+            $data_final_ajustada = $data_final . ' 23:59:59';
+
+            $sql = "SELECT 
+                        fp.nome,
+                        COUNT(v.id) as quantidade,
+                        COALESCE(SUM(v.valor_total), 0) as total
+                    FROM formas_pagamento fp
+                    LEFT JOIN vendas v ON fp.id = v.forma_pagamento_id 
+                        AND v.data_venda BETWEEN :data_inicial AND :data_final_ajustada
+                        AND v.status = 'concluida'
+                    WHERE fp.ativo = 1
+                    GROUP BY fp.id, fp.nome
+                    ORDER BY total DESC";
+
+            $stmt = $connection->prepare($sql);
+            $stmt->bindParam(':data_inicial', $data_inicial);
+            $stmt->bindParam(':data_final_ajustada', $data_final_ajustada);
+            $stmt->execute();
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("Erro ao obter resumo de pagamentos: " . $e->getMessage());
+            return [];
+        }
+    }
+}
+
+if (!function_exists('obterRetiradas')) {
+    function obterRetiradas($connection, $data_inicial, $data_final)
+    {
+        try {
+            $sql = "SELECT 
+                        r.data_retirada,
+                        r.valor,
+                        r.motivo,
+                        u.nome as usuario_nome
+                    FROM retiradas r
+                    INNER JOIN usuarios u ON r.usuario_id = u.id
+                    WHERE DATE(r.data_retirada) BETWEEN :data_inicial AND :data_final
+                    ORDER BY r.data_retirada DESC";
+
+            $stmt = $connection->prepare($sql);
+            $stmt->bindParam(':data_inicial', $data_inicial);
+            $stmt->bindParam(':data_final', $data_final);
+            $stmt->execute();
+            $retiradas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // Calcular total
+            $total_retiradas = 0;
+            foreach ($retiradas as $retirada) {
+                $total_retiradas += $retirada['valor'];
+            }
+
+            return [
+                'detalhes' => $retiradas,
+                'total' => $total_retiradas
+            ];
+        } catch (PDOException $e) {
+            error_log("Erro ao obter retiradas: " . $e->getMessage());
+            return [
+                'detalhes' => [],
+                'total' => 0
+            ];
+        }
+    }
+}
+
+if (!function_exists('obterVendasPeriodo')) {
+    function obterVendasPeriodo($connection, $data_inicial, $data_final)
+    {
+        try {
+            $data_final_ajustada = $data_final . ' 23:59:59';
+
+            $sql = "SELECT 
+                        v.data_venda,
+                        v.valor_total,
+                        fp.nome as forma_pagamento,
+                        u.nome as usuario_nome,
+                        v.descricao
+                    FROM vendas v
+                    INNER JOIN formas_pagamento fp ON v.forma_pagamento_id = fp.id
+                    INNER JOIN usuarios u ON v.usuario_id = u.id
+                    WHERE v.data_venda BETWEEN :data_inicial AND :data_final_ajustada
+                    AND v.status = 'concluida'
+                    ORDER BY v.data_venda DESC";
+
+            $stmt = $connection->prepare($sql);
+            $stmt->bindParam(':data_inicial', $data_inicial);
+            $stmt->bindParam(':data_final_ajustada', $data_final_ajustada);
+            $stmt->execute();
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("Erro ao obter vendas do período: " . $e->getMessage());
+            return [];
+        }
+    }
+}
 
 // Define o período padrão (hoje)
 $data_inicial = date('Y-m-d');
@@ -16,7 +132,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['data_inicial'])) {
     $data_inicial = $_GET['data_inicial'];
     $data_final = $_GET['data_final'];
 }
-
 // RELATÓRIO PDF DE VENDAS
 if (isset($_GET['gerar_pdf'])) {
     require_once('../lib/tcpdf/tcpdf.php');
@@ -24,13 +139,13 @@ if (isset($_GET['gerar_pdf'])) {
     // Busca os dados do relatório usando funções do functions.php
     $vendas = obterVendasPeriodo($connection, $data_inicial, $data_final);
     $resumo_pagamentos = obterResumoPagamentos($connection, $data_inicial, $data_final);
-    
+
     // Calcular total geral
     $total_geral = 0;
     foreach ($resumo_pagamentos as $resumo) {
         $total_geral += $resumo['total'];
     }
-    
+
     // Buscar saldos e retiradas usando funções do functions.php
     $saldo_inicial = obterSaldoInicial($connection, $data_inicial);
     $saldo_final = obterSaldoFinal($connection, $data_final);
@@ -71,16 +186,16 @@ if (isset($_GET['gerar_pdf'])) {
     $pdf->SetFont('helvetica', 'B', 12);
     $pdf->Cell(0, 10, 'SALDOS DO CAIXA', 0, 1);
     $pdf->SetFont('helvetica', '', 10);
-    
+
     // Tabela de saldos
     $pdf->SetFillColor(240, 248, 255);
     $pdf->Cell(60, 8, 'Saldo Inicial', 1, 0, 'L', 1);
     $pdf->Cell(60, 8, 'Saldo Final', 1, 1, 'L', 1);
-    
+
     $pdf->SetFont('helvetica', 'B', 11);
     $pdf->Cell(60, 8, 'R$ ' . number_format($saldo_inicial, 2, ',', '.'), 1, 0, 'L');
     $pdf->Cell(60, 8, 'R$ ' . number_format($saldo_final, 2, ',', '.'), 1, 1, 'L');
-    
+
     $pdf->Ln(8);
 
     // Resumo financeiro
@@ -134,27 +249,27 @@ if (isset($_GET['gerar_pdf'])) {
         if ($pdf->GetY() > 180) {
             $pdf->AddPage();
         }
-        
+
         $pdf->SetFont('helvetica', 'B', 12);
         $pdf->Cell(0, 10, 'RELATÓRIO DE RETIRADAS', 0, 1);
         $pdf->SetFont('helvetica', '', 10);
-        
+
         // Cabeçalho da tabela de retiradas
         $pdf->SetFillColor(139, 0, 0); // Vermelho escuro para retiradas
         $pdf->SetTextColor(255);
-        
+
         $col_widths_retiradas = array(40, 50, 60, 30);
-        
+
         $pdf->Cell($col_widths_retiradas[0], 7, 'DATA', 1, 0, 'C', 1);
         $pdf->Cell($col_widths_retiradas[1], 7, 'MOTIVO', 1, 0, 'C', 1);
         $pdf->Cell($col_widths_retiradas[2], 7, 'RESPONSÁVEL', 1, 0, 'C', 1);
         $pdf->Cell($col_widths_retiradas[3], 7, 'VALOR', 1, 1, 'C', 1);
-        
+
         // Dados das retiradas
         $pdf->SetFillColor(255, 240, 240); // Cor diferente para retiradas
         $pdf->SetTextColor(0);
         $fill = false;
-        
+
         foreach ($retiradas['detalhes'] as $retirada) {
             if ($pdf->GetY() > 250) {
                 $pdf->AddPage();
@@ -169,26 +284,26 @@ if (isset($_GET['gerar_pdf'])) {
                 $pdf->SetFont('helvetica', '', 10);
                 $pdf->SetTextColor(0);
             }
-            
+
             $data_retirada = $retirada['data_retirada'] ?? '';
             $motivo = $retirada['motivo'] ?? 'Não informado';
             $usuario = $retirada['usuario_nome'] ?? 'Não informado';
             $valor = $retirada['valor'] ?? 0;
-            
+
             $data_formatada = $data_retirada ? date('d/m/Y', strtotime($data_retirada)) : 'N/A';
-            
+
             $pdf->Cell($col_widths_retiradas[0], 6, $data_formatada, 'LR', 0, 'C', $fill);
             $pdf->Cell($col_widths_retiradas[1], 6, substr($motivo, 0, 25), 'LR', 0, 'L', $fill);
             $pdf->Cell($col_widths_retiradas[2], 6, substr($usuario, 0, 25), 'LR', 0, 'L', $fill);
             $pdf->Cell($col_widths_retiradas[3], 6, 'R$ ' . number_format($valor, 2, ',', '.'), 'LR', 1, 'R', $fill);
-            
+
             $fill = !$fill;
         }
-        
+
         // Fechar a tabela e mostrar total
         $pdf->Cell(array_sum($col_widths_retiradas), 0, '', 'T');
         $pdf->Ln(5);
-        
+
         // Total das retiradas
         $pdf->SetFont('helvetica', 'B', 12);
         $pdf->Cell(0, 10, 'TOTAL DE RETIRADAS: R$ ' . number_format($retiradas['total'], 2, ',', '.'), 0, 1, 'R');
@@ -201,7 +316,7 @@ if (isset($_GET['gerar_pdf'])) {
         if ($pdf->GetY() > 150) {
             $pdf->AddPage();
         }
-        
+
         $quantidade_vendas = count($vendas);
         $pdf->SetFont('helvetica', 'B', 12);
         $pdf->Cell(0, 10, 'DETALHAMENTO DAS VENDAS (' . $quantidade_vendas . ' vendas)', 0, 1);
@@ -431,6 +546,7 @@ $relatorio = [
 
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -588,7 +704,7 @@ $relatorio = [
             background: white;
             padding: 15px;
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
             text-align: center;
         }
 
@@ -623,7 +739,7 @@ $relatorio = [
             background: white;
             padding: 15px;
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
             margin-bottom: 20px;
         }
 
@@ -639,6 +755,7 @@ $relatorio = [
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <?php include '../includes/header.php'; ?>
@@ -694,7 +811,7 @@ $relatorio = [
                             <span>Período: <?= date('d/m/Y', strtotime($data_inicial)) ?> a <?= date('d/m/Y', strtotime($data_final)) ?></span>
                         </div>
                         <div class="card-body">
-                            
+
                             <!-- SEÇÃO DE SALDOS -->
                             <div class="saldos-section">
                                 <div class="saldo-card saldo-inicial">
@@ -704,7 +821,7 @@ $relatorio = [
                                     <div class="saldo-label">Saldo Inicial</div>
                                     <div class="saldo-value"><?= formatarMoeda($saldo_inicial) ?></div>
                                 </div>
-                                
+
                                 <div class="saldo-card saldo-final">
                                     <div class="saldo-icon">
                                         <i class="fas fa-cash-register"></i>
@@ -879,4 +996,5 @@ $relatorio = [
         }
     </script>
 </body>
+
 </html>

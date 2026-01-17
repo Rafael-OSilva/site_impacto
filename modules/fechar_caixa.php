@@ -1,20 +1,92 @@
 <?php
 session_start();
-require_once '../config/database.php';
-require_once '../includes/functions.php';
+// Verificar se o usuário está logado
+if (!isset($_SESSION['usuario_id'])) {
+    header('Location: ../login.php');
+    exit;
+}
 
-// Protege a página e conecta ao banco
-verificarLogin();
+// Definir o diretório base
+define('BASE_PATH', dirname(__DIR__));
+
+// Incluir configurações e funções com caminho absoluto
+require_once BASE_PATH . '/config/database.php';
+require_once BASE_PATH . '/functions.php';
+
+// Conectar ao banco de dados
 $db = new Database();
 $connection = $db->getConnection();
 
-// Verifica o status do caixa e pega as informações dele
+// Adicionar a função que está faltando
+if (!function_exists('obterRelatorioVendasPorCaixa')) {
+    function obterRelatorioVendasPorCaixa($connection, $caixa_id) {
+        $relatorio = [
+            'vendas' => [],
+            'resumo_pagamentos' => [],
+            'total_geral' => 0,
+            'total_a_receber' => 0
+        ];
+
+        try {
+            // Detalhamento
+            $query_vendas = "SELECT v.*, fp.nome as forma_pagamento
+                             FROM vendas v
+                             JOIN formas_pagamento fp ON v.forma_pagamento_id = fp.id
+                             WHERE v.caixa_id = :caixa_id 
+                             AND (v.status = 'concluida' OR v.status = 'a_receber' OR v.status = '' OR v.status IS NULL)
+                             ORDER BY v.data_venda DESC";
+            $stmt_vendas = $connection->prepare($query_vendas);
+            $stmt_vendas->bindParam(':caixa_id', $caixa_id);
+            $stmt_vendas->execute();
+            $relatorio['vendas'] = $stmt_vendas->fetchAll(PDO::FETCH_ASSOC);
+
+            // Resumo
+            $query_resumo = "SELECT fp.nome, COUNT(v.id) as quantidade, SUM(v.valor_total) as total
+                             FROM vendas v
+                             JOIN formas_pagamento fp ON v.forma_pagamento_id = fp.id
+                             WHERE v.caixa_id = :caixa_id AND v.status = 'concluida'
+                             GROUP BY fp.nome ORDER BY total DESC";
+            $stmt_resumo = $connection->prepare($query_resumo);
+            $stmt_resumo->bindParam(':caixa_id', $caixa_id);
+            $stmt_resumo->execute();
+            $relatorio['resumo_pagamentos'] = $stmt_resumo->fetchAll(PDO::FETCH_ASSOC);
+
+            // Total Geral (apenas concluídas)
+            foreach ($relatorio['resumo_pagamentos'] as $resumo) {
+                $relatorio['total_geral'] += $resumo['total'];
+            }
+
+            // Total a Receber
+            $query_a_receber = "SELECT SUM(valor_total) as total 
+                               FROM vendas 
+                               WHERE caixa_id = :caixa_id 
+                               AND (forma_pagamento_id = 5 OR forma_pagamento_id = 7) 
+                               AND (status = '' OR status IS NULL OR status = 'a_receber')";
+            $stmt_a_receber = $connection->prepare($query_a_receber);
+            $stmt_a_receber->bindParam(':caixa_id', $caixa_id);
+            $stmt_a_receber->execute();
+            $total_a_receber = $stmt_a_receber->fetch(PDO::FETCH_ASSOC);
+            $relatorio['total_a_receber'] = $total_a_receber['total'] ?? 0;
+
+            return $relatorio;
+        } catch (PDOException $e) {
+            error_log("Erro ao obter relatório do caixa: " . $e->getMessage());
+            return $relatorio;
+        }
+    }
+}
+
+// Verificar se o caixa já está aberto
 $status_caixa = verificarStatusCaixa($connection);
+$caixa_aberto = $status_caixa;
+
+// Obter informações do caixa aberto
 $caixa_info = null;
 if ($status_caixa) {
     $caixa_info = obterCaixaAberto($connection);
 }
 
+// Inicializar variáveis
 $mensagem = '';
 $erro = '';
 
@@ -35,6 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $mensagem = "Caixa fechado com sucesso! Redirecionando para o dashboard...";
                 $status_caixa = false; 
                 header("refresh:3;url=../index.php");
+                exit;
             } else {
                 $erro = "Ocorreu um erro ao fechar o caixa.";
             }
@@ -47,15 +120,60 @@ $resumo_vendas = [];
 $vendas_detalhadas = [];
 $total_vendas = 0;
 $saldo_esperado_dinheiro = 0;
+$resumo_caixa_dinheiro = null;
 
-if ($status_caixa) {
+if ($status_caixa && $caixa_info) {
     $relatorio_caixa_atual = obterRelatorioVendasPorCaixa($connection, $caixa_info['id']);
-    $resumo_vendas = $relatorio_caixa_atual['resumo_pagamentos'];
-    $vendas_detalhadas = $relatorio_caixa_atual['vendas'];
-    $total_vendas = $relatorio_caixa_atual['total_geral'];
+    $resumo_vendas = $relatorio_caixa_atual['resumo_pagamentos'] ?? [];
+    $vendas_detalhadas = $relatorio_caixa_atual['vendas'] ?? [];
+    $total_vendas = $relatorio_caixa_atual['total_geral'] ?? 0;
 
+    if (!function_exists('calcularResumoCaixaAberto')) {
+        function calcularResumoCaixaAberto($connection, $caixa_id) {
+            $resumo = [
+                'valor_inicial' => 0,
+                'vendas_dinheiro' => 0,
+                'vendas_a_receber' => 0,
+                'total_retiradas' => 0,
+                'saldo_disponivel' => 0,
+                'total_vendas_concluidas' => 0
+            ];
+
+            try {
+                // 1. Valor inicial
+                $caixa = obterCaixaAberto($connection);
+                $resumo['valor_inicial'] = $caixa['valor_inicial'] ?? 0;
+
+                // 2. Vendas em Dinheiro (ID 1) - APENAS CONCLUÍDAS
+                $query_vendas_dinheiro = "SELECT SUM(valor_total) as total FROM vendas 
+                                 WHERE caixa_id = :caixa_id AND forma_pagamento_id = 1 AND status = 'concluida'";
+                $stmt_vendas_dinheiro = $connection->prepare($query_vendas_dinheiro);
+                $stmt_vendas_dinheiro->bindParam(':caixa_id', $caixa_id);
+                $stmt_vendas_dinheiro->execute();
+                $total_vendas_dinheiro = $stmt_vendas_dinheiro->fetch(PDO::FETCH_ASSOC);
+                $resumo['vendas_dinheiro'] = $total_vendas_dinheiro['total'] ?? 0;
+
+                // 3. Total de Retiradas
+                $query_retiradas = "SELECT SUM(valor) as total FROM retiradas WHERE caixa_id = :caixa_id";
+                $stmt_retiradas = $connection->prepare($query_retiradas);
+                $stmt_retiradas->bindParam(':caixa_id', $caixa_id);
+                $stmt_retiradas->execute();
+                $total_retiradas = $stmt_retiradas->fetch(PDO::FETCH_ASSOC);
+                $resumo['total_retiradas'] = $total_retiradas['total'] ?? 0;
+
+                // 6. Saldo disponível em dinheiro
+                $resumo['saldo_disponivel'] = $resumo['valor_inicial'] + $resumo['vendas_dinheiro'] - $resumo['total_retiradas'];
+
+                return $resumo;
+            } catch (PDOException $e) {
+                error_log("Erro ao calcular resumo do caixa: " . $e->getMessage());
+                return $resumo;
+            }
+        }
+    }
+    
     $resumo_caixa_dinheiro = calcularResumoCaixaAberto($connection, $caixa_info['id']);
-    $saldo_esperado_dinheiro = $resumo_caixa_dinheiro['saldo_disponivel'];
+    $saldo_esperado_dinheiro = $resumo_caixa_dinheiro['saldo_disponivel'] ?? 0;
 }
 
 // Mapeamento de classes CSS para formas de pagamento
@@ -473,25 +591,6 @@ $badge_classes = [
         .summary-card:nth-child(5) { animation-delay: 0.5s; }
         .summary-card:nth-child(6) { animation-delay: 0.6s; }
 
-        /* Efeito de brilho no hover */
-        .summary-card::after {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: linear-gradient(45deg, transparent, rgba(255,255,255,0.15), transparent);
-            transform: rotate(45deg);
-            transition: all 0.8s ease;
-            opacity: 0;
-        }
-
-        .summary-card:hover::after {
-            opacity: 1;
-            transform: rotate(45deg) translate(50%, 50%);
-        }
-
         /* Responsividade */
         @media (max-width: 1200px) {
             .financial-summary {
@@ -540,18 +639,6 @@ $badge_classes = [
                 font-size: 0.8rem;
             }
         }
-
-        /* Destaque para diferença */
-        .difference-highlight {
-            background: linear-gradient(135deg, #fff3cd, #ffeaa7);
-            border: 2px solid #ffc107;
-            border-radius: 10px;
-            padding: 15px;
-            margin: 15px 0;
-            text-align: center;
-            font-weight: 600;
-            color: #856404;
-        }
     </style>
 </head>
 <body>
@@ -562,13 +649,13 @@ $badge_classes = [
     <main>
         <h1 class="page-title"><i class="fas fa-door-closed"></i> Fechar Caixa</h1>
 
-        <?php if ($mensagem): ?>
+        <?php if (!empty($mensagem)): ?>
             <div class="alert-success">
                 <i class="fas fa-check-circle"></i> <?= $mensagem ?>
             </div>
         <?php endif; ?>
 
-        <?php if ($erro): ?>
+        <?php if (!empty($erro)): ?>
             <div class="alert-danger">
                 <i class="fas fa-exclamation-circle"></i> <?= $erro ?>
             </div>
@@ -585,20 +672,22 @@ $badge_classes = [
             </div>
 
             <div class="financial-summary">
-                <?php foreach ($resumo_vendas as $resumo): 
-                    $nome = $resumo['nome'] ?? 'N/A';
-                    $classe = $payment_classes[$nome] ?? 'default';
-                    $icone = $payment_icons[$nome] ?? 'fa-money-bill-wave';
-                ?>
-                <div class="summary-card <?= $classe ?>">
-                    <div class="summary-icon">
-                        <i class="fas <?= $icone ?>"></i>
+                <?php if (!empty($resumo_vendas)): ?>
+                    <?php foreach ($resumo_vendas as $resumo): 
+                        $nome = $resumo['nome'] ?? 'N/A';
+                        $classe = $payment_classes[$nome] ?? 'default';
+                        $icone = $payment_icons[$nome] ?? 'fa-money-bill-wave';
+                    ?>
+                    <div class="summary-card <?= $classe ?>">
+                        <div class="summary-icon">
+                            <i class="fas <?= $icone ?>"></i>
+                        </div>
+                        <div class="summary-value"><?= formatarMoeda($resumo['total'] ?? 0) ?></div>
+                        <div class="summary-label"><?= htmlspecialchars($nome) ?></div>
+                        <div class="summary-count"><?= ($resumo['quantidade'] ?? 0) ?> vendas</div>
                     </div>
-                    <div class="summary-value"><?= formatarMoeda($resumo['total']) ?></div>
-                    <div class="summary-label"><?= htmlspecialchars($nome) ?></div>
-                    <div class="summary-count"><?= ($resumo['quantidade'] ?? 0) ?> vendas</div>
-                </div>
-                <?php endforeach; ?>
+                    <?php endforeach; ?>
+                <?php endif; ?>
                 
                 <div class="summary-card total">
                     <div class="summary-icon">
@@ -613,9 +702,10 @@ $badge_classes = [
             <div class="card">
                 <div class="card-header">
                     <span>Detalhamento das Vendas</span>
-                    <span>Data: <?= date('d/m/Y', strtotime($caixa_info['data_abertura'])) ?></span>
+                    <span>Data: <?= isset($caixa_info['data_abertura']) ? date('d/m/Y', strtotime($caixa_info['data_abertura'])) : date('d/m/Y') ?></span>
                 </div>
                 <div class="card-body">
+                    <?php if (!empty($vendas_detalhadas)): ?>
                     <table class="sales-table">
                         <thead>
                             <tr>
@@ -643,6 +733,13 @@ $badge_classes = [
                         <?php endforeach; ?>
                         </tbody>
                     </table>
+                    <?php else: ?>
+                        <div style="text-align: center; padding: 40px; color: #6c757d;">
+                            <i class="fas fa-shopping-cart" style="font-size: 48px; margin-bottom: 15px;"></i>
+                            <h3>Nenhuma venda registrada</h3>
+                            <p>Não há vendas registradas neste caixa.</p>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </div>
 
@@ -651,15 +748,15 @@ $badge_classes = [
                 <form id="close-register-form" method="POST">
                     <div class="form-group">
                         <label><i class="fas fa-flag"></i> Saldo Inicial (Dinheiro)</label>
-                        <input type="text" value="<?= formatarMoeda($resumo_caixa_dinheiro['valor_inicial']) ?>" readonly>
+                        <input type="text" value="<?= isset($resumo_caixa_dinheiro['valor_inicial']) ? formatarMoeda($resumo_caixa_dinheiro['valor_inicial']) : 'R$ 0,00' ?>" readonly>
                     </div>
                     <div class="form-group">
                         <label><i class="fas fa-plus-circle"></i> Vendas (Dinheiro)</label>
-                        <input type="text" value="<?= formatarMoeda($resumo_caixa_dinheiro['vendas_dinheiro']) ?>" readonly>
+                        <input type="text" value="<?= isset($resumo_caixa_dinheiro['vendas_dinheiro']) ? formatarMoeda($resumo_caixa_dinheiro['vendas_dinheiro']) : 'R$ 0,00' ?>" readonly>
                     </div>
                     <div class="form-group">
                         <label><i class="fas fa-minus-circle"></i> Retiradas (Dinheiro)</label>
-                        <input type="text" value="<?= formatarMoeda($resumo_caixa_dinheiro['total_retiradas']) ?>" readonly>
+                        <input type="text" value="<?= isset($resumo_caixa_dinheiro['total_retiradas']) ? formatarMoeda($resumo_caixa_dinheiro['total_retiradas']) : 'R$ 0,00' ?>" readonly>
                     </div>
                     <div class="form-group">
                         <label><i class="fas fa-equals"></i> Saldo Esperado (Dinheiro em Caixa)</label>
@@ -694,13 +791,21 @@ document.addEventListener('DOMContentLoaded', function () {
             const actualBalanceInput = document.getElementById('valor_final');
             const actualBalance = parseFloat(actualBalanceInput.value);
             
-            const expectedBalance = <?= $saldo_esperado_dinheiro ?? 0 ?>;
+            const expectedBalanceElement = document.getElementById('expected-balance');
+            const expectedBalanceText = expectedBalanceElement.value.replace('R$ ', '').replace('.', '').replace(',', '.');
+            const expectedBalance = parseFloat(expectedBalanceText) || 0;
             const difference = actualBalance - expectedBalance;
 
             let message = `🎯 CONFIRMAR FECHAMENTO DO CAIXA?\n\n`;
             message += `💰 Saldo Esperado em Dinheiro: R$ ${expectedBalance.toFixed(2)}\n`;
             message += `💵 Saldo Real Informado: R$ ${actualBalance.toFixed(2)}\n`;
             message += `📊 Diferença: R$ ${difference.toFixed(2)}\n\n`;
+            
+            if (difference !== 0) {
+                message += `⚠️ ATENÇÃO: Existe uma diferença de R$ ${difference.toFixed(2)}\n`;
+                message += `Por favor, verifique a contagem do dinheiro.\n\n`;
+            }
+            
             message += `Esta ação não pode ser desfeita.`;
 
             if (confirm(message)) {

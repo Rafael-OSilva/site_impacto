@@ -6,13 +6,20 @@ if (!isset($_SESSION['usuario_id'])) {
     exit;
 }
 
-// Incluir configurações e funções
-require_once '../config/database.php';
-require_once '../includes/functions.php';
+// Definir o diretório base
+define('BASE_PATH', dirname(__DIR__));
+
+// Incluir configurações e funções com caminho absoluto
+require_once BASE_PATH . '/config/database.php';
+require_once BASE_PATH . '/functions.php';
 
 // Conectar ao banco de dados
 $db = new Database();
 $connection = $db->getConnection();
+
+// Verificar se o caixa já está aberto
+$status_caixa = verificarStatusCaixa($connection);
+$caixa_aberto = verificarStatusCaixa($connection);
 
 // Obter ID da venda
 $venda_id = $_GET['id'] ?? 0;

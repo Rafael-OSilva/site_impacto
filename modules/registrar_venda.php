@@ -1,18 +1,25 @@
 <?php
 session_start();
-require_once '../config/database.php';
-require_once '../includes/functions.php';
-
 // Verificar se o usuário está logado
-verificarLogin();
+if (!isset($_SESSION['usuario_id'])) {
+    header('Location: ../login.php');
+    exit;
+}
+
+// Definir o diretório base
+define('BASE_PATH', dirname(__DIR__));
+
+// Incluir configurações e funções com caminho absoluto
+require_once BASE_PATH . '/config/database.php';
+require_once BASE_PATH . '/functions.php';
 
 // Conectar ao banco de dados
 $db = new Database();
 $connection = $db->getConnection();
 
-// Verificar se o caixa está aberto
+// Verificar se o caixa já está aberto
+$status_caixa = verificarStatusCaixa($connection);
 $caixa_aberto = verificarStatusCaixa($connection);
-$caixa_info = obterCaixaAberto($connection);
 
 // Obter formas de pagamento
 $formas_pagamento = obterFormasPagamento($connection);
