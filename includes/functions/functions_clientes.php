@@ -417,3 +417,245 @@ function obterResumoCliente($connection, $cliente_id)
         return [];
     }
 }
+
+/**
+ * Verificar se um cliente pode ser excluído
+ * @param PDO $connection Conexão PDO
+ * @param int $clienteId ID do cliente
+ * @return array Resultado da verificação
+ */
+function verificarPossibilidadeExclusao($connection, $clienteId)
+{
+    try {
+        $resultado = [
+            'pode_excluir' => true,
+            'motivos' => [],
+            'detalhes' => [],
+            'cliente' => null
+        ];
+
+        // Buscar informações do cliente
+        $cliente = buscarClientePorId($connection, $clienteId);
+        
+        if (!$cliente) {
+            $resultado['pode_excluir'] = false;
+            $resultado['motivos'][] = "Cliente não encontrado.";
+            return $resultado;
+        }
+        
+        $resultado['cliente'] = $cliente;
+        $resultado['detalhes']['nome'] = $cliente['nome'];
+        $resultado['detalhes']['valor_credito'] = $cliente['valor_credito'];
+
+        // Verificar se cliente está ativo
+        if ($cliente['ativo'] == 0) {
+            $resultado['pode_excluir'] = false;
+            $resultado['motivos'][] = "Cliente já está inativo.";
+        }
+
+        // Verificar saldo de crédito
+        $saldo = floatval($cliente['valor_credito']);
+        if ($saldo > 0) {
+            $resultado['pode_excluir'] = false;
+            $resultado['motivos'][] = "Cliente possui saldo de crédito: R$ " . 
+                                      number_format($saldo, 2, ',', '.');
+            $resultado['detalhes']['credito_restante'] = $saldo;
+        }
+
+        // Verificar contas a receber pendentes
+        $sql_pendentes = "SELECT COUNT(*) as total, SUM(valor_total) as total_valor 
+                         FROM vendas 
+                         WHERE cliente_id = :cliente_id 
+                         AND forma_pagamento_id = 5  -- ID para 'A Receber'
+                         AND data_recebimento IS NULL
+                         AND status = 'concluida'";
+        
+        $stmt = $connection->prepare($sql_pendentes);
+        $stmt->execute([':cliente_id' => $clienteId]);
+        $pendentes = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($pendentes && $pendentes['total'] > 0) {
+            $resultado['pode_excluir'] = false;
+            $resultado['motivos'][] = "Cliente possui " . $pendentes['total'] . 
+                                     " conta(s) a receber pendente(s): R$ " . 
+                                     number_format($pendentes['total_valor'], 2, ',', '.');
+            $resultado['detalhes']['contas_pendentes'] = $pendentes;
+        }
+
+        // Verificar se há histórico de vendas (apenas para informação)
+        $sql_historico = "SELECT COUNT(*) as total_vendas FROM vendas WHERE cliente_id = :cliente_id";
+        $stmt = $connection->prepare($sql_historico);
+        $stmt->execute([':cliente_id' => $clienteId]);
+        $historico = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($historico && $historico['total_vendas'] > 0) {
+            $resultado['detalhes']['total_vendas'] = $historico['total_vendas'];
+            $resultado['info'] = "Cliente possui histórico de " . $historico['total_vendas'] . " venda(s).";
+        }
+
+        return $resultado;
+
+    } catch (PDOException $e) {
+        error_log("Erro ao verificar exclusão do cliente: " . $e->getMessage());
+        return [
+            'pode_excluir' => false,
+            'motivos' => ["Erro ao verificar dados: " . $e->getMessage()],
+            'detalhes' => [],
+            'cliente' => null
+        ];
+    }
+}
+
+/**
+ * Excluir cliente com verificação de segurança
+ * @param PDO $connection Conexão PDO
+ * @param int $clienteId ID do cliente
+ * @param int $usuarioId ID do usuário que está excluindo
+ * @param string $motivo Motivo da exclusão
+ * @return array Resultado da operação
+ */
+function excluirClienteCompleto($connection, $clienteId, $usuarioId, $motivo = '')
+{
+    try {
+        // Verificar se pode excluir
+        $verificacao = verificarPossibilidadeExclusao($connection, $clienteId);
+        
+        if (!$verificacao['pode_excluir']) {
+            return [
+                'success' => false,
+                'message' => implode(' ', $verificacao['motivos'])
+            ];
+        }
+
+        // Iniciar transação
+        $connection->beginTransaction();
+
+        // Registrar histórico antes de excluir
+        $sql_historico = "INSERT INTO historico_exclusoes 
+                         (cliente_id, usuario_id, nome_cliente, motivo, data_exclusao) 
+                         VALUES (:cliente_id, :usuario_id, :nome_cliente, :motivo, NOW())";
+        
+        $stmt_historico = $connection->prepare($sql_historico);
+        $stmt_historico->execute([
+            ':cliente_id' => $clienteId,
+            ':usuario_id' => $usuarioId,
+            ':nome_cliente' => $verificacao['cliente']['nome'],
+            ':motivo' => $motivo ?: 'Exclusão solicitada pelo usuário'
+        ]);
+
+        // Fazer exclusão lógica (marcar como inativo)
+        $sql_excluir = "UPDATE clientes SET 
+                       ativo = 0,
+                       data_inativacao = NOW(),
+                       usuario_inativacao = :usuario_id 
+                       WHERE id = :id";
+        
+        $stmt_excluir = $connection->prepare($sql_excluir);
+        $stmt_excluir->execute([
+            ':usuario_id' => $usuarioId,
+            ':id' => $clienteId
+        ]);
+
+        // Desvincular cliente de vendas existentes
+        $sql_desvincular = "UPDATE vendas SET cliente_id = NULL WHERE cliente_id = :cliente_id";
+        $stmt_desvincular = $connection->prepare($sql_desvincular);
+        $stmt_desvincular->execute([':cliente_id' => $clienteId]);
+
+        // Confirmar transação
+        $connection->commit();
+
+        return [
+            'success' => true,
+            'message' => "Cliente '{$verificacao['cliente']['nome']}' excluído com sucesso!",
+            'cliente_nome' => $verificacao['cliente']['nome']
+        ];
+
+    } catch (PDOException $e) {
+        // Reverter transação em caso de erro
+        if ($connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        
+        error_log("Erro ao excluir cliente #$clienteId: " . $e->getMessage());
+        
+        return [
+            'success' => false,
+            'message' => "Erro de banco de dados: " . $e->getMessage()
+        ];
+    } catch (Exception $e) {
+        if (isset($connection) && $connection->inTransaction()) {
+            $connection->rollBack();
+        }
+        
+        return [
+            'success' => false,
+            'message' => $e->getMessage()
+        ];
+    }
+}
+
+/**
+ * Listar clientes excluídos
+ * @param PDO $connection Conexão PDO
+ * @param int $limite Limite de registros
+ * @return array Lista de clientes excluídos
+ */
+function listarClientesExcluidos($connection, $limite = 50)
+{
+    try {
+        $sql = "SELECT c.id, c.nome, c.cpf, c.data_cadastro, 
+                       he.data_exclusao, he.motivo,
+                       u.nome as usuario_exclusao
+                FROM clientes c
+                JOIN historico_exclusoes he ON c.id = he.cliente_id
+                JOIN usuarios u ON he.usuario_id = u.id
+                WHERE c.ativo = 0
+                ORDER BY he.data_exclusao DESC
+                LIMIT :limite";
+        
+        $stmt = $connection->prepare($sql);
+        $stmt->bindValue(':limite', $limite, PDO::PARAM_INT);
+        $stmt->execute();
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+    } catch (PDOException $e) {
+        error_log("Erro ao listar clientes excluídos: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Restaurar cliente excluído
+ * @param PDO $connection Conexão PDO
+ * @param int $clienteId ID do cliente
+ * @param int $usuarioId ID do usuário que está restaurando
+ * @return bool Sucesso da operação
+ */
+function restaurarCliente($connection, $clienteId, $usuarioId)
+{
+    try {
+        // Verificar se cliente existe e está inativo
+        $sql = "SELECT id, nome FROM clientes WHERE id = :id AND ativo = 0";
+        $stmt = $connection->prepare($sql);
+        $stmt->execute([':id' => $clienteId]);
+        
+        if (!$stmt->fetch()) {
+            throw new Exception("Cliente não encontrado ou já está ativo.");
+        }
+
+        // Restaurar cliente
+        $sql_restaurar = "UPDATE clientes SET 
+                         ativo = 1,
+                         data_inativacao = NULL,
+                         usuario_inativacao = NULL
+                         WHERE id = :id";
+        
+        $stmt = $connection->prepare($sql_restaurar);
+        return $stmt->execute([':id' => $clienteId]);
+        
+    } catch (PDOException $e) {
+        error_log("Erro ao restaurar cliente #$clienteId: " . $e->getMessage());
+        return false;
+    }
+}

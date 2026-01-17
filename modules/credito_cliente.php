@@ -41,9 +41,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'valor_credito' => $_POST['valor_credito'] ?? '0,00'
             ];
 
-            // Log dos dados recebidos
-            error_log("📋 Dados recebidos para cadastro: " . json_encode($dados));
-
             // Validações básicas
             if (empty($dados['nome'])) {
                 throw new Exception("O nome do cliente é obrigatório.");
@@ -63,13 +60,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($clienteId) {
                 $mensagem = "✅ Cliente cadastrado com sucesso! ID: " . $clienteId;
-                error_log("✅ Cliente cadastrado com sucesso! ID: " . $clienteId);
             } else {
                 throw new Exception("Erro ao cadastrar cliente no banco de dados.");
             }
         } catch (Exception $e) {
             $erro = "❌ " . $e->getMessage();
-            error_log("❌ Erro ao cadastrar cliente: " . $e->getMessage());
         }
     }
     // Atualização de crédito via AJAX
@@ -109,7 +104,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("Erro ao atualizar crédito no banco de dados.");
             }
         } catch (Exception $e) {
-            error_log("Erro atualizar crédito: " . $e->getMessage());
             echo json_encode([
                 'success' => false,
                 'message' => '❌ ' . $e->getMessage()
@@ -117,49 +111,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         exit;
     }
-}
-
-// EXCLUSÃO DE CLIENTE
-if (isset($_POST['acao']) && $_POST['acao'] === 'excluir_cliente') {
-    header('Content-Type: application/json');
-
-    try {
-        $cliente_id = intval($_POST['cliente_id'] ?? 0);
-        $motivo = trim($_POST['motivo'] ?? '');
-
-        // Validações
-        if ($cliente_id <= 0) {
-            throw new Exception("ID do cliente inválido.");
-        }
-
-        if (empty($motivo)) {
-            throw new Exception("Informe o motivo da exclusão.");
-        }
-
-        // Verificar se cliente existe
-        $cliente = buscarClientePorId($connection, $cliente_id);
-        if (!$cliente) {
-            throw new Exception("Cliente não encontrado.");
-        }
-
-        // Excluir cliente
-        if (excluirCliente($connection, $cliente_id, $_SESSION['usuario_id'], $motivo)) {
-            echo json_encode([
-                'success' => true,
-                'message' => '✅ Cliente excluído com sucesso!',
-                'cliente_nome' => $cliente['nome']
-            ]);
-        } else {
-            throw new Exception("Erro ao excluir cliente no banco de dados.");
-        }
-    } catch (Exception $e) {
-        error_log("Erro ao excluir cliente: " . $e->getMessage());
-        echo json_encode([
-            'success' => false,
-            'message' => '❌ ' . $e->getMessage()
-        ]);
-    }
-    exit;
 }
 
 // Obter dados para exibição
@@ -193,7 +144,6 @@ $is_module_page = true;
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="../css/style.css">
     <style>
-        /* Seus estilos CSS permanecem os mesmos */
         .card {
             background: white;
             border-radius: 8px;
@@ -207,9 +157,6 @@ $is_module_page = true;
             background-color: #f8f9fa;
             border-bottom: 1px solid #ddd;
             font-weight: bold;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
         }
 
         .card-body {
@@ -406,7 +353,9 @@ $is_module_page = true;
             font-weight: 500;
             transition: all 0.3s;
             text-decoration: none;
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .btn-primary {
@@ -432,9 +381,12 @@ $is_module_page = true;
             color: white;
             border: none;
             border-radius: 4px;
-            padding: 5px 10px;
+            padding: 6px 12px;
             cursor: pointer;
             font-size: 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
         }
 
         .btn-editar:hover {
@@ -451,25 +403,89 @@ $is_module_page = true;
             gap: 10px;
         }
 
-        /* Adicione no seu <style> */
-        .btn-excluir {
-            background: #e74c3c;
+        .btn-danger {
+            background-color: #e74c3c;
             color: white;
-            border: none;
+        }
+
+        .btn-danger:hover {
+            background-color: #c0392b;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        /* Estilos para a busca */
+        .search-container {
+            margin: 15px 0;
+        }
+
+        .search-box {
+            position: relative;
+            max-width: 400px;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 10px 40px 10px 15px;
+            border: 1px solid #ddd;
             border-radius: 4px;
-            padding: 5px 10px;
-            cursor: pointer;
-            font-size: 0.85rem;
-            margin-left: 5px;
+            font-size: 1rem;
         }
 
-        .btn-excluir:hover {
-            background: #c0392b;
+        .search-icon {
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #7f8c8d;
         }
 
-        .btn-excluir:disabled {
-            background: #95a5a6;
-            cursor: not-allowed;
+        .no-results {
+            text-align: center;
+            padding: 30px;
+            color: #7f8c8d;
+            font-style: italic;
+        }
+
+        .search-stats {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .highlight {
+            background-color: #fff3cd;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        /* Responsividade */
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-container {
+                grid-template-columns: 1fr;
+            }
+            
+            table {
+                font-size: 0.9rem;
+            }
+            
+            th, td {
+                padding: 8px 10px;
+            }
+            
+            .btn-editar {
+                padding: 4px 8px;
+                font-size: 0.8rem;
+            }
         }
     </style>
 </head>
@@ -568,9 +584,24 @@ $is_module_page = true;
                     <span class="badge badge-success"><?= $clientes_com_credito_count ?> cliente(s)</span>
                 </div>
                 <div class="card-body">
+                    <!-- Campo de busca -->
+                    <div class="search-container">
+                        <div class="search-box">
+                            <input type="text" 
+                                   id="searchInput" 
+                                   class="search-input" 
+                                   placeholder="Buscar por nome ou CPF..."
+                                   title="Digite nome ou CPF para filtrar">
+                            <i class="fas fa-search search-icon"></i>
+                        </div>
+                        <div class="search-stats">
+                            <span id="searchResultsCount"><?= $clientes_com_credito_count ?> cliente(s) encontrado(s)</span>
+                        </div>
+                    </div>
+
                     <?php if (count($clientes_com_credito) > 0): ?>
                         <div class="table-responsive">
-                            <table>
+                            <table id="clientesTable">
                                 <thead>
                                     <tr>
                                         <th>ID</th>
@@ -581,12 +612,15 @@ $is_module_page = true;
                                         <th>Ações</th>
                                     </tr>
                                 </thead>
-                                <tbody>
+                                <tbody id="clientesTableBody">
                                     <?php foreach ($clientes_com_credito as $cliente): ?>
-                                        <tr>
+                                        <tr class="cliente-row" 
+                                            data-id="<?= $cliente['id'] ?>"
+                                            data-nome="<?= htmlspecialchars(strtolower($cliente['nome'])) ?>"
+                                            data-cpf="<?= htmlspecialchars(preg_replace('/[^0-9]/', '', $cliente['cpf'])) ?>">
                                             <td><?= $cliente['id'] ?></td>
-                                            <td><?= htmlspecialchars($cliente['nome']) ?></td>
-                                            <td><?= $cliente['cpf'] ? htmlspecialchars($cliente['cpf']) : '-' ?></td>
+                                            <td class="cliente-nome"><?= htmlspecialchars($cliente['nome']) ?></td>
+                                            <td class="cliente-cpf"><?= formatarCPF($cliente['cpf']) ?></td>
                                             <td><?= $cliente['telefone'] ? htmlspecialchars($cliente['telefone']) : '-' ?></td>
                                             <td class="valor-credito">
                                                 R$ <?= number_format($cliente['valor_credito'], 2, ',', '.') ?>
@@ -602,16 +636,6 @@ $is_module_page = true;
                                                 )">
                                                     <i class="fas fa-edit"></i> Editar
                                                 </button>
-                                                <?php if ($cliente['valor_credito'] == 0): ?>
-                                                    <button class="btn-excluir"
-                                                        onclick="abrirModalExclusao(
-                                                            <?= $cliente['id'] ?>,
-                                                            '<?= addslashes($cliente['nome']) ?>'
-                                                        )"
-                                                        title="Excluir cliente">
-                                                        <i class="fas fa-trash"></i>
-                                                    </button>
-                                                <?php endif; ?>
                                             </td>
                                         </tr>
                                     <?php endforeach; ?>
@@ -653,7 +677,7 @@ $is_module_page = true;
                                         <tr>
                                             <td><?= $cliente['id'] ?></td>
                                             <td><?= htmlspecialchars($cliente['nome']) ?></td>
-                                            <td><?= $cliente['cpf'] ? htmlspecialchars($cliente['cpf']) : '-' ?></td>
+                                            <td><?= $cliente['cpf'] ? formatarCPF($cliente['cpf']) : '-' ?></td>
                                             <td><?= $cliente['telefone'] ? htmlspecialchars($cliente['telefone']) : '-' ?></td>
                                             <td>
                                                 <?php if ($cliente['valor_credito'] > 0): ?>
@@ -675,16 +699,6 @@ $is_module_page = true;
                                                 )">
                                                     <i class="fas fa-edit"></i> Crédito
                                                 </button>
-                                                <?php if ($cliente['valor_credito'] == 0): ?>
-                                                    <button class="btn-excluir"
-                                                        onclick="abrirModalExclusao(
-                                                            <?= $cliente['id'] ?>,
-                                                            '<?= addslashes($cliente['nome']) ?>'
-                                                        )"
-                                                        title="Excluir cliente">
-                                                        <i class="fas fa-trash"></i>
-                                                    </button>
-                                                <?php endif; ?>
                                             </td>
                                         </tr>
                                     <?php endforeach; ?>
@@ -740,46 +754,8 @@ $is_module_page = true;
                     <button type="submit" class="btn btn-primary" id="btnAtualizar">
                         <i class="fas fa-save"></i> Atualizar Crédito
                     </button>
-                </div>
-            </form>
-        </div>
-    </div>
-    <!-- Modal de Exclusão de Cliente -->
-    <div class="modal" id="modalExcluir">
-        <div class="modal-content">
-            <h3><i class="fas fa-trash"></i> Excluir Cliente</h3>
-
-            <div class="cliente-info" id="clienteInfoExcluir">
-                <!-- Informações serão preenchidas via JavaScript -->
-            </div>
-
-            <form id="formExcluir" onsubmit="excluirCliente(event)">
-                <input type="hidden" name="acao" value="excluir_cliente">
-                <input type="hidden" id="cliente_id_excluir" name="cliente_id">
-
-                <div class="form-group">
-                    <label for="motivo">Motivo da Exclusão *</label>
-                    <textarea id="motivo" name="motivo"
-                        rows="4"
-                        required
-                        placeholder="Informe o motivo da exclusão..."></textarea>
-                    <small style="color: #666;">Esta informação será registrada no histórico.</small>
-                </div>
-
-                <div class="alert alert-warning">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <strong>Atenção:</strong> Esta ação marcará o cliente como inativo.
-                    Clientes com crédito ou vendas pendentes não podem ser excluídos.
-                </div>
-
-                <div id="modalMensagemExcluir"></div>
-
-                <div class="modal-actions">
-                    <button type="button" class="btn btn-secondary" onclick="fecharModalExclusao()">
-                        <i class="fas fa-times"></i> Cancelar
-                    </button>
-                    <button type="submit" class="btn btn-danger" id="btnExcluir">
-                        <i class="fas fa-trash"></i> Confirmar Exclusão
+                    <button type="submit" class="btn btn-primary" id="btnAtualizar">
+                        <i class="fas fa-save"></i> Excluir Cliente
                     </button>
                 </div>
             </form>
@@ -791,6 +767,13 @@ $is_module_page = true;
         function abrirModalCredito(clienteId, clienteNome, creditoAtual, clienteCpf, clienteTelefone) {
             // Preencher informações do cliente
             const clienteInfo = document.getElementById('clienteInfo');
+            
+            // Formatar CPF se existir
+            let cpfFormatado = clienteCpf;
+            if (clienteCpf && clienteCpf.length === 11) {
+                cpfFormatado = clienteCpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+            }
+            
             clienteInfo.innerHTML = `
                 <div class="cliente-info-row">
                     <span><strong>Cliente:</strong></span>
@@ -799,7 +782,7 @@ $is_module_page = true;
                 ${clienteCpf ? `
                 <div class="cliente-info-row">
                     <span><strong>CPF:</strong></span>
-                    <span>${clienteCpf}</span>
+                    <span>${cpfFormatado}</span>
                 </div>
                 ` : ''}
                 ${clienteTelefone ? `
@@ -894,8 +877,121 @@ $is_module_page = true;
             `;
         }
 
+        // FUNÇÃO DE BUSCA EM TEMPO REAL
+        function iniciarBusca() {
+            const searchInput = document.getElementById('searchInput');
+            const clientesTableBody = document.getElementById('clientesTableBody');
+            const searchResultsCount = document.getElementById('searchResultsCount');
+            
+            if (!searchInput || !clientesTableBody) return;
+            
+            // Armazenar todas as linhas originais
+            const todasLinhas = Array.from(clientesTableBody.querySelectorAll('.cliente-row'));
+            
+            searchInput.addEventListener('input', function() {
+                const termo = this.value.trim().toLowerCase();
+                let encontrados = 0;
+                
+                if (termo === '') {
+                    // Mostrar todos os clientes
+                    todasLinhas.forEach(linha => {
+                        linha.style.display = '';
+                        // Remover highlight
+                        const nomeCell = linha.querySelector('.cliente-nome');
+                        const cpfCell = linha.querySelector('.cliente-cpf');
+                        if (nomeCell) nomeCell.innerHTML = nomeCell.textContent;
+                        if (cpfCell) cpfCell.innerHTML = cpfCell.textContent;
+                    });
+                    encontrados = todasLinhas.length;
+                } else {
+                    // Filtrar clientes
+                    todasLinhas.forEach(linha => {
+                        const nome = linha.getAttribute('data-nome') || '';
+                        const cpf = linha.getAttribute('data-cpf') || '';
+                        
+                        const correspondeNome = nome.includes(termo);
+                        const correspondeCPF = cpf.includes(termo.replace(/\D/g, ''));
+                        
+                        if (correspondeNome || correspondeCPF) {
+                            linha.style.display = '';
+                            encontrados++;
+                            
+                            // Adicionar highlight ao texto encontrado
+                            if (correspondeNome) {
+                                const nomeCell = linha.querySelector('.cliente-nome');
+                                if (nomeCell) {
+                                    const textoOriginal = nomeCell.textContent;
+                                    const regex = new RegExp(`(${termo})`, 'gi');
+                                    nomeCell.innerHTML = textoOriginal.replace(regex, '<span class="highlight">$1</span>');
+                                }
+                            }
+                            
+                            if (correspondeCPF) {
+                                const cpfCell = linha.querySelector('.cliente-cpf');
+                                if (cpfCell) {
+                                    const textoOriginal = cpfCell.textContent;
+                                    const termoLimpo = termo.replace(/\D/g, '');
+                                    const regex = new RegExp(`(${termoLimpo})`, 'gi');
+                                    cpfCell.innerHTML = textoOriginal.replace(regex, '<span class="highlight">$1</span>');
+                                }
+                            }
+                        } else {
+                            linha.style.display = 'none';
+                            // Remover highlight das células escondidas
+                            const nomeCell = linha.querySelector('.cliente-nome');
+                            const cpfCell = linha.querySelector('.cliente-cpf');
+                            if (nomeCell) nomeCell.innerHTML = nomeCell.textContent;
+                            if (cpfCell) cpfCell.innerHTML = cpfCell.textContent;
+                        }
+                    });
+                }
+                
+                // Atualizar contador
+                searchResultsCount.textContent = `${encontrados} cliente(s) encontrado(s)`;
+                
+                // Mostrar mensagem se nenhum resultado
+                let noResultsRow = clientesTableBody.querySelector('.no-results-row');
+                if (encontrados === 0 && termo !== '') {
+                    if (!noResultsRow) {
+                        noResultsRow = document.createElement('tr');
+                        noResultsRow.className = 'no-results-row';
+                        noResultsRow.innerHTML = `
+                            <td colspan="6" class="no-results">
+                                <i class="fas fa-search"></i>
+                                <p>Nenhum cliente encontrado para "${termo}"</p>
+                                <small>Tente buscar por nome ou CPF</small>
+                            </td>
+                        `;
+                        clientesTableBody.appendChild(noResultsRow);
+                    }
+                } else if (noResultsRow) {
+                    noResultsRow.remove();
+                }
+            });
+            
+            // Focar no campo de busca ao pressionar Ctrl+F
+            document.addEventListener('keydown', function(e) {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                    e.preventDefault();
+                    searchInput.focus();
+                    searchInput.select();
+                }
+            });
+            
+            // Limpar busca com ESC
+            searchInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    this.value = '';
+                    this.dispatchEvent(new Event('input'));
+                }
+            });
+        }
+
         // Máscaras para CPF, telefone e valor
         document.addEventListener('DOMContentLoaded', function() {
+            // Iniciar sistema de busca
+            iniciarBusca();
+            
             // Máscara para CPF
             const cpfInput = document.getElementById('cpf');
             if (cpfInput) {
@@ -961,205 +1057,6 @@ $is_module_page = true;
             // Fechar modal com ESC
             document.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape') {
-                    fecharModalCredito();
-                }
-            });
-        });
-
-        // Funções para o modal de exclusão
-        function abrirModalExclusao(clienteId, clienteNome) {
-            const clienteInfo = document.getElementById('clienteInfoExcluir');
-            clienteInfo.innerHTML = `
-        <div class="cliente-info-row">
-            <span><strong>Cliente a ser excluído:</strong></span>
-            <span><strong style="color: #e74c3c;">${clienteNome}</strong></span>
-        </div>
-        <div class="cliente-info-row">
-            <span><strong>ID:</strong></span>
-            <span>${clienteId}</span>
-        </div>
-        <div class="cliente-info-row">
-            <span><strong>Ação:</strong></span>
-            <span style="color: #e74c3c;">Cliente será marcado como inativo</span>
-        </div>
-    `;
-
-            // Configurar formulário
-            document.getElementById('cliente_id_excluir').value = clienteId;
-            document.getElementById('motivo').value = '';
-            document.getElementById('motivo').focus();
-            document.getElementById('modalMensagemExcluir').innerHTML = '';
-
-            // Abrir modal
-            document.getElementById('modalExcluir').classList.add('active');
-        }
-
-        function fecharModalExclusao() {
-            document.getElementById('modalExcluir').classList.remove('active');
-        }
-
-        // Excluir cliente via AJAX
-        function excluirCliente(event) {
-            event.preventDefault();
-
-            const form = document.getElementById('formExcluir');
-            const formData = new FormData(form);
-            const btnExcluir = document.getElementById('btnExcluir');
-
-            // Validar motivo
-            const motivo = document.getElementById('motivo').value.trim();
-            if (motivo.length < 5) {
-                mostrarMensagemExclusao('error', '❌ Informe um motivo com pelo menos 5 caracteres.');
-                return;
-            }
-
-            // Desabilitar botão e mostrar loading
-            btnExcluir.disabled = true;
-            btnExcluir.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Excluindo...';
-
-            // Enviar requisição
-            fetch('', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(async response => {
-                    const data = await response.json();
-                    return data;
-                })
-                .then(data => {
-                    if (data.success) {
-                        mostrarMensagemExclusao('success', data.message);
-
-                        // Recarregar a página após 2 segundos
-                        setTimeout(() => {
-                            location.reload();
-                        }, 2000);
-                    } else {
-                        mostrarMensagemExclusao('error', data.message);
-                        btnExcluir.disabled = false;
-                        btnExcluir.innerHTML = '<i class="fas fa-trash"></i> Confirmar Exclusão';
-                    }
-                })
-                .catch(error => {
-                    console.error('Erro:', error);
-                    mostrarMensagemExclusao('error', '❌ Erro ao excluir cliente. Tente novamente.');
-                    btnExcluir.disabled = false;
-                    btnExcluir.innerHTML = '<i class="fas fa-trash"></i> Confirmar Exclusão';
-                });
-        }
-
-        function mostrarMensagemExclusao(tipo, mensagem) {
-            const mensagemDiv = document.getElementById('modalMensagemExcluir');
-            mensagemDiv.innerHTML = `
-        <div class="alert alert-${tipo === 'success' ? 'success' : 'error'}" style="margin: 10px 0;">
-            <i class="fas fa-${tipo === 'success' ? 'check' : 'exclamation'}-circle"></i> ${mensagem}
-        </div>
-    `;
-        }
-        // Preencher informações do cliente
-        const clienteInfo = document.getElementById('clienteInfoExcluir');
-        clienteInfo.innerHTML = `
-        <div class="cliente-info-row">
-            <span><strong>Cliente a ser excluído:</strong></span>
-            <span><strong style="color: #e74c3c;">${clienteNome}</strong></span>
-        </div>
-        <div class="cliente-info-row">
-            <span><strong>ID:</strong></span>
-            <span>${clienteId}</span>
-        </div>
-        <div class="cliente-info-row">
-            <span><strong>Ação:</strong></span>
-            <span style="color: #e74c3c;">Cliente será marcado como inativo</span>
-        </div>
-    `;
-
-        // Configurar formulário
-        document.getElementById('cliente_id_excluir').value = clienteId;
-        document.getElementById('motivo').value = '';
-        document.getElementById('motivo').focus();
-        document.getElementById('modalMensagemExcluir').innerHTML = '';
-
-        // Abrir modal
-        document.getElementById('modalExcluir').classList.add('active');
-
-        function fecharModalExclusao() {
-            document.getElementById('modalExcluir').classList.remove('active');
-        }
-
-        // Excluir cliente via AJAX
-        function excluirCliente(event) {
-            event.preventDefault();
-
-            const form = document.getElementById('formExcluir');
-            const formData = new FormData(form);
-            const btnExcluir = document.getElementById('btnExcluir');
-
-            // Validar motivo
-            const motivo = document.getElementById('motivo').value.trim();
-            if (motivo.length < 5) {
-                mostrarMensagemExclusao('error', '❌ Informe um motivo com pelo menos 5 caracteres.');
-                return;
-            }
-
-            // Desabilitar botão e mostrar loading
-            btnExcluir.disabled = true;
-            btnExcluir.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Excluindo...';
-
-            // Enviar requisição
-            fetch('', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(async response => {
-                    const data = await response.json();
-                    return data;
-                })
-                .then(data => {
-                    if (data.success) {
-                        mostrarMensagemExclusao('success', data.message);
-
-                        // Recarregar a página após 2 segundos
-                        setTimeout(() => {
-                            location.reload();
-                        }, 2000);
-                    } else {
-                        mostrarMensagemExclusao('error', data.message);
-                        btnExcluir.disabled = false;
-                        btnExcluir.innerHTML = '<i class="fas fa-trash"></i> Confirmar Exclusão';
-                    }
-                })
-                .catch(error => {
-                    console.error('Erro:', error);
-                    mostrarMensagemExclusao('error', '❌ Erro ao excluir cliente. Tente novamente.');
-                    btnExcluir.disabled = false;
-                    btnExcluir.innerHTML = '<i class="fas fa-trash"></i> Confirmar Exclusão';
-                });
-        }
-
-        function mostrarMensagemExclusao(tipo, mensagem) {
-            const mensagemDiv = document.getElementById('modalMensagemExcluir');
-            mensagemDiv.innerHTML = `
-        <div class="alert alert-${tipo === 'success' ? 'success' : 'error'}" style="margin: 10px 0;">
-            <i class="fas fa-${tipo === 'success' ? 'check' : 'exclamation'}-circle"></i> ${mensagem}
-        </div>
-    `;
-        }
-
-        // Adicione também no evento DOMContentLoaded:
-        document.addEventListener('DOMContentLoaded', function() {
-            // ... código existente ...
-
-            // Fechar modal de exclusão ao clicar fora
-            document.getElementById('modalExcluir').addEventListener('click', function(e) {
-                if (e.target === this) {
-                    fecharModalExclusao();
-                }
-            });
-
-            // Fechar modal com ESC
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape') {
-                    fecharModalExclusao();
                     fecharModalCredito();
                 }
             });

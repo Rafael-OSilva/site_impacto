@@ -135,3 +135,45 @@ function obterEstatisticasSistema($connection)
         return [];
     }
 }
+
+/**
+ * Formatar CPF para exibição
+ * @param string $cpf CPF sem formatação
+ * @return string CPF formatado
+ */
+function formatarCPF($cpf)
+{
+    if (empty($cpf) || $cpf === '0' || $cpf === 0) {
+        return 'Não informado';
+    }
+    
+    $cpf = preg_replace('/[^0-9]/', '', $cpf);
+    
+    if (strlen($cpf) === 11) {
+        return substr($cpf, 0, 3) . '.' . 
+               substr($cpf, 3, 3) . '.' . 
+               substr($cpf, 6, 3) . '-' . 
+               substr($cpf, 9, 2);
+    }
+    
+    return $cpf;
+}
+
+/**
+ * Formatar valor monetário
+ * @param float $valor Valor a ser formatado
+ * @return string Valor formatado
+ */
+function formatarValor($valor)
+{
+    return 'R$ ' . number_format(floatval($valor), 2, ',', '.');
+}
+
+/**
+ * Verificar se usuário é administrador
+ * @return bool True se for admin
+ */
+function isAdmin()
+{
+    return isset($_SESSION['nivel_acesso']) && $_SESSION['nivel_acesso'] === 'admin';
+}

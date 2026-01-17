@@ -66,3 +66,4 @@ function converterValorBrasileiro($valor) {
     $valor = str_replace(',', '.', $valor);
     return floatval($valor);
 }
+
